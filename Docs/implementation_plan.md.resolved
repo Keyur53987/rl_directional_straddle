@@ -1,0 +1,278 @@
+# Feature Engineering Implementation Plan - [COMPLETED]
+
+## Goal
+Implement comprehensive feature set to enable the RL model to accurately identify volatility regimes and adapt straddle/strangle positions for optimal profitability.
+
+## User's Key Insight
+
+> **Volatility-Driven Strategy**: High volatility → Long straddle/strangle profitable; Low volatility → Short straddle profitable via time decay. Therefore, volatility identification is critical.
+
+This is absolutely correct! The feature set will be designed with volatility regime detection as the primary focus.
+
+---
+
+## CRITICAL: Data Sources - NO SIMULATED DATA
+
+> [!CAUTION]
+> **STRICT REQUIREMENT**: All features must be calculated from REAL data only. NO random/simulated data allowed.
+
+### Your Real Input Data (1-minute OHLCV)
+You provide CSV files with these columns:
+- `datetime` - timestamp
+- `open` - opening price
+- `high` - highest price in the bar
+- `low` - lowest price in the bar
+- `close` - closing price
+- `volume` - trading volume
+
+### How All 60 Features Are Derived from These 6 Columns
+
+**All features are calculated using:**
+1. **Historical lookback** on your real OHLCV data (rolling windows)
+2. **Mathematical transformations** of real prices (returns, volatility, etc.)
+3. **Black-Scholes formula** using real underlying price + time to expiry
+4. **Position tracking** from actual trades executed in the environment
+
+**NO external data, NO random generation, NO simulation** - everything comes from your real 1-minute bars.
+
+## Proposed Feature Set (55 features)
+
+> [!NOTE]
+> **Volume features removed**: NIFTY/BANKNIFTY are indices, not tradable instruments, so they have zero volume. All features below are calculated from OHLC data only.
+
+### 1. Volatility Features (12 features) - **CRITICAL**
+- Rolling realized volatility (5-min, 15-min, 30-min, 60-min windows)
+- Parkinson volatility (high-low based estimator)
+- Garman-Klass volatility (OHLC-based estimator)
+- Volatility percentile (current vol vs. historical distribution)
+- Volatility of volatility (vol regime stability)
+- Intraday volatility trend
+- IV estimate vs. realized vol spread
+
+### 2. Price & Returns (10 features)
+- Current close price (normalized)
+- Returns over multiple windows (1-min, 5-min, 15-min, 30-min)
+- Distance from VWAP
+- Distance from day high/low
+- Price momentum
+
+### 3. Greeks (10 features) - **CRITICAL for Options**
+**First Order:**
+- Delta (CE + PE combined)
+- Gamma (total position)
+- Vega (total position sensitivity to IV)
+- Theta (time decay)
+
+**Second Order (Volatility-focused):**
+- Vanna (Delta sensitivity to IV changes)
+- Volga/Vomma (Vega sensitivity to IV changes)
+
+**Position Greeks:**
+- Net Delta exposure
+- Gamma exposure
+- Vega exposure
+- Theta exposure
+
+### 4. Technical Indicators (6 features)
+- RSI (14-period)
+- MACD line
+- MACD signal
+- MACD histogram
+- Bollinger Band position
+- ATR (Average True Range)
+
+### 5. Position Features (10 features)
+- CE lots, PE lots
+- CE/PE ratio
+- Total premium deployed
+- Premium deployed as % of capital
+- Distance of strikes from ATM
+- Entry prices (CE, PE)
+- Current option prices (CE, PE)
+- Unrealized PnL
+- PnL as % of premium
+
+### 6. Time Features (4 features)
+- Minutes since market open (normalized)
+- Minutes until market close (normalized)
+- Sine encoding of time (cyclical)
+- Cosine encoding of time (cyclical)
+
+### 7. Risk Metrics (3 features)
+- Current drawdown
+- Max drawdown
+- Sharpe ratio (rolling)
+
+---
+
+## Feature Derivation Details - How Each Feature is Calculated
+
+### Input: Your Real 1-Minute OHLC Data
+```
+datetime, open, high, low, close, (volume ignored for indices)
+```
+
+### Feature Calculation Formulas
+
+| Feature | Formula/Calculation | Data Source |
+|---------|-------------------|-------------|
+| **1. Volatility Features** | | |
+| Rolling Vol (5-min) | `std(returns[-5:]) * sqrt(252*390)` | close prices |
+| Rolling Vol (15-min) | `std(returns[-15:]) * sqrt(252*390)` | close prices |
+| Rolling Vol (30-min) | `std(returns[-30:]) * sqrt(252*390)` | close prices |
+| Rolling Vol (60-min) | `std(returns[-60:]) * sqrt(252*390)` | close prices |
+| Parkinson Vol | `sqrt(sum(log(high/low)²) / (4*ln(2)*n))` | high, low |
+| Garman-Klass Vol | `0.5*log(H/L)² - (2*log(2)-1)*log(C/O)²` | OHLC |
+| Vol Percentile | `percentile_rank(current_vol, hist_vol)` | calculated vols |
+| Vol of Vol | `std(rolling_vol[-30:])` | calculated vols |
+| Intraday Vol Trend | [(vol_recent - vol_earlier) / vol_earlier](file:///c:/Users/Admin/OneDrive/Desktop/MAI/Thesis/Code/Deep-Hedging/rl_directional_straddle/test.py#9-43) | calculated vols |
+| IV vs Realized Spread | `config.IV_ESTIMATE - realized_vol` | config + calc |
+| **2. Price & Returns** | | |
+| Close (normalized) | [(close - day_open) / day_open](file:///c:/Users/Admin/OneDrive/Desktop/MAI/Thesis/Code/Deep-Hedging/rl_directional_straddle/test.py#9-43) | close, open |
+| Return 1-min | [(close[t] - close[t-1]) / close[t-1]](file:///c:/Users/Admin/OneDrive/Desktop/MAI/Thesis/Code/Deep-Hedging/rl_directional_straddle/test.py#9-43) | close |
+| Return 5-min | [(close[t] - close[t-5]) / close[t-5]](file:///c:/Users/Admin/OneDrive/Desktop/MAI/Thesis/Code/Deep-Hedging/rl_directional_straddle/test.py#9-43) | close |
+| Return 15-min | [(close[t] - close[t-15]) / close[t-15]](file:///c:/Users/Admin/OneDrive/Desktop/MAI/Thesis/Code/Deep-Hedging/rl_directional_straddle/test.py#9-43) | close |
+| Return 30-min | [(close[t] - close[t-30]) / close[t-30]](file:///c:/Users/Admin/OneDrive/Desktop/MAI/Thesis/Code/Deep-Hedging/rl_directional_straddle/test.py#9-43) | close |
+| VWAP Distance | [(close - vwap) / vwap](file:///c:/Users/Admin/OneDrive/Desktop/MAI/Thesis/Code/Deep-Hedging/rl_directional_straddle/test.py#9-43) | OHLC (vwap = (H+L+C)/3) |
+| Distance from Day High | [(day_high - close) / close](file:///c:/Users/Admin/OneDrive/Desktop/MAI/Thesis/Code/Deep-Hedging/rl_directional_straddle/test.py#9-43) | high, close |
+| Distance from Day Low | [(close - day_low) / close](file:///c:/Users/Admin/OneDrive/Desktop/MAI/Thesis/Code/Deep-Hedging/rl_directional_straddle/test.py#9-43) | low, close |
+| Price Momentum | `sum(returns[-10:])` | close |
+| **3. Greeks (Black-Scholes)** | | |
+| Delta CE | `N(d1)` from Black-Scholes | close, strikes, time |
+| Delta PE | `-N(-d1)` from Black-Scholes | close, strikes, time |
+| Gamma | `N'(d1) / (S * σ * sqrt(T))` | close, IV, time |
+| Vega | `S * N'(d1) * sqrt(T)` | close, IV, time |
+| Theta | BS theta formula | close, IV, time |
+| Vanna | `Vega * (1 - d1/(σ*sqrt(T)))` | close, IV, time |
+| Volga | `Vega * d1 * d2 / σ` | close, IV, time |
+| Net Delta | `delta_ce * ce_lots - delta_pe * pe_lots` | calculated + position |
+| Gamma Exposure | `gamma * (ce_lots + pe_lots) * LOT_SIZE` | calculated + position |
+| Vega Exposure | `vega * (ce_lots + pe_lots) * LOT_SIZE` | calculated + position |
+| **4. Technical Indicators** | | |
+| RSI | `100 - 100/(1 + RS)` where RS = avg_gain/avg_loss | close |
+| MACD Line | `EMA(12) - EMA(26)` | close |
+| MACD Signal | `EMA(MACD, 9)` | calculated MACD |
+| MACD Histogram | `MACD - Signal` | calculated MACD |
+| Bollinger Position | [(close - BB_mid) / (BB_upper - BB_lower)](file:///c:/Users/Admin/OneDrive/Desktop/MAI/Thesis/Code/Deep-Hedging/rl_directional_straddle/test.py#9-43) | close |
+| ATR | `EMA(TrueRange, 14)` | high, low, close |
+| **5. Position Features** | | |
+| CE Lots | Tracked in environment | position tracking |
+| PE Lots | Tracked in environment | position tracking |
+| CE/PE Ratio | `ce_lots / (pe_lots + 1e-8)` | position tracking |
+| Premium Deployed | [(ce_price * ce_lots + pe_price * pe_lots) * LOT_SIZE](file:///c:/Users/Admin/OneDrive/Desktop/MAI/Thesis/Code/Deep-Hedging/rl_directional_straddle/test.py#9-43) | BS prices + position |
+| Premium % Capital | `premium_deployed / INITIAL_CAPITAL` | calculated |
+| CE Strike Distance | [(ce_strike - close) / close](file:///c:/Users/Admin/OneDrive/Desktop/MAI/Thesis/Code/Deep-Hedging/rl_directional_straddle/test.py#9-43) | strikes, close |
+| PE Strike Distance | [(close - pe_strike) / close](file:///c:/Users/Admin/OneDrive/Desktop/MAI/Thesis/Code/Deep-Hedging/rl_directional_straddle/test.py#9-43) | strikes, close |
+| CE Entry Price | Tracked at entry | position tracking |
+| PE Entry Price | Tracked at entry | position tracking |
+| Unrealized PnL | [(current_price - entry_price) * lots * LOT_SIZE](file:///c:/Users/Admin/OneDrive/Desktop/MAI/Thesis/Code/Deep-Hedging/rl_directional_straddle/test.py#9-43) | BS prices + tracking |
+| **6. Time Features** | | |
+| Minutes Since Open | [(current_time - START_TIME).total_seconds() / 60](file:///c:/Users/Admin/OneDrive/Desktop/MAI/Thesis/Code/Deep-Hedging/rl_directional_straddle/test.py#9-43) | datetime |
+| Minutes to Close | [(END_TIME - current_time).total_seconds() / 60](file:///c:/Users/Admin/OneDrive/Desktop/MAI/Thesis/Code/Deep-Hedging/rl_directional_straddle/test.py#9-43) | datetime |
+| Time Sine | `sin(2π * minutes_since_open / total_minutes)` | datetime |
+| Time Cosine | `cos(2π * minutes_since_open / total_minutes)` | datetime |
+| **7. Risk Metrics** | | |
+| Current Drawdown | `peak_pnl - current_pnl` | PnL tracking |
+| Max Drawdown | `max(all_drawdowns)` | PnL tracking |
+| Rolling Sharpe | `mean(returns[-30:]) / std(returns[-30:]) * sqrt(390)` | PnL tracking |
+
+### Black-Scholes Implementation
+
+**For Option Pricing AND Greeks:**
+```python
+import numpy as np
+from scipy.stats import norm
+
+def black_scholes(S, K, T, r, sigma, option_type='call'):
+    d1 = (np.log(S/K) + (r + 0.5*sigma**2)*T) / (sigma*np.sqrt(T))
+    d2 = d1 - sigma*np.sqrt(T)
+    
+    if option_type == 'call':
+        price = S*norm.cdf(d1) - K*np.exp(-r*T)*norm.cdf(d2)
+        delta = norm.cdf(d1)
+    else:
+        price = K*np.exp(-r*T)*norm.cdf(-d2) - S*norm.cdf(-d1)
+        delta = -norm.cdf(-d1)
+    
+    # Greeks
+    gamma = norm.pdf(d1) / (S * sigma * np.sqrt(T))
+    vega = S * norm.pdf(d1) * np.sqrt(T) / 100  # per 1% IV change
+    theta = (-S*norm.pdf(d1)*sigma/(2*np.sqrt(T)) - 
+             r*K*np.exp(-r*T)*norm.cdf(d2 if option_type=='call' else -d2)) / 365
+    
+    # Second-order Greeks
+    vanna = vega * (1 - d1/(sigma*np.sqrt(T)))
+    volga = vega * d1 * d2 / sigma
+    
+    return price, delta, gamma, vega, theta, vanna, volga
+```
+
+**Parameters:**
+- `S` = current underlying close price (from your data)
+- `K` = strike price (set at position entry)
+- `T` = time to expiry in years = `minutes_to_close / (252 * 390)`
+- `r` = `config.RISK_FREE_RATE`
+- `sigma` = estimated IV (can use `config.IV_ESTIMATE` or calculated realized vol)
+
+---
+
+## Proposed Changes
+
+### [MODIFY] [intraday_option_env.py](file:///c:/Users/Admin/OneDrive/Desktop/MAI/Thesis/Code/Deep-Hedging/rl_directional_straddle/envs/intraday_option_env.py)
+
+**Changes:**
+1. Update observation space from 40 to 55 features
+2. Implement comprehensive [_get_observation()](file:///c:/Users/Admin/OneDrive/Desktop/MAI/Thesis/Code/Deep-Hedging/rl_directional_straddle/envs/intraday_option_env.py#192-335) method
+3. Add helper methods:
+   - `_calculate_volatility_features()`
+   - `_calculate_greeks()`
+   - `_calculate_technical_indicators()`
+
+   - `_safe_divide()` for NaN handling
+4. Add feature caching for performance
+5. Implement proper feature normalization
+
+**Key Implementation Details:**
+- Use Black-Scholes for BOTH option pricing AND Greeks calculation
+- Use vectorized numpy operations for speed
+- Handle edge cases (insufficient data at start of day)
+- Cache intermediate calculations (moving averages, etc.)
+- Implement Parkinson and Garman-Klass volatility estimators
+- NO volume features (indices have no volume)
+
+---
+
+## Verification Plan
+
+### Automated Tests
+1. **Feature Calculation Test**: Verify each feature calculates without errors
+2. **Dimension Test**: Confirm observation shape is (55,)
+3. **NaN/Inf Test**: Ensure no invalid values in features
+4. **Range Test**: Check features are properly normalized
+5. **Black-Scholes Test**: Verify option prices match expected values
+
+### Manual Verification
+1. Print sample observations for a few timesteps
+2. Verify volatility features respond correctly to price movements
+3. Check Greeks make sense for different market conditions
+4. Validate technical indicators against known values
+5. Confirm Black-Scholes option prices are reasonable
+
+---
+
+## Implementation Notes
+
+> [!IMPORTANT]
+> **Volatility Focus**: Since straddle/strangle profitability depends heavily on volatility regime, we're implementing multiple volatility estimators (realized, Parkinson, Garman-Klass) and second-order Greeks (Vanna, Volga) that measure sensitivity to volatility changes.
+
+> [!NOTE]
+> **Feature Count**: Expanding from 5 to 55 features. This is justified because:
+> - Volatility regime detection requires multiple estimators
+> - Options trading needs comprehensive Greeks
+> - Real-time adaptation requires multi-timeframe analysis
+
+> [!CAUTION]
+> **Black-Scholes for Everything**: Replacing the simplified option pricing model with full Black-Scholes implementation for both option pricing AND Greeks calculation. This ensures accuracy.
+
+> [!TIP]
+> **Performance**: Feature calculation will use vectorized operations and caching to maintain fast step times even with 60 features.
