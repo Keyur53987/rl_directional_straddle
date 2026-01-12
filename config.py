@@ -2,6 +2,7 @@
 # Configuration for Intraday RL Trading System
 
 # Account Settings
+
 INITIAL_CAPITAL = 1000000.0
 MAX_LOTS = 10
 TRANSACTION_COST_PCT = 0.0005  # 0.05% per trade
