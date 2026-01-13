@@ -10,26 +10,64 @@ import datetime
 def main():
     # Configuration
     AGENT = 'PPO'
-    SAVE_DIR = os.path.join('model', AGENT)
-    MODEL_PATH = os.path.join(SAVE_DIR, f'{AGENT.lower()}_intraday_model')
-    RESULTS_DIR = os.path.join(SAVE_DIR, 'results')
     DATA_PATH = 'data/test.csv'
     MODE = 'add'
     START_DATE = "2025-01-01"  # User can filter range
     END_DATE = "2025-12-31"    # User can filter range
 
-    os.makedirs(RESULTS_DIR, exist_ok=True)
-
     print(f"Loading Environment with Mode: {MODE}")
     env = IntradayOptionEnv(data_path=DATA_PATH, mode=MODE, start_date=START_DATE, end_date=END_DATE)
 
+    # --- Model Selection Logic ---
+    BASE_MODEL_DIR = os.path.join('model', AGENT)
+    
+    # Optional: Set this to a specific timestamp (e.g., "20231027_103000") to load a specific old model.
+    # If None, it automatically finds the latest one.
+    MODEL_ID = None 
+    
+    if MODEL_ID is None:
+        # Find the latest timestamped folder
+        if not os.path.exists(BASE_MODEL_DIR):
+            print(f"No models found in {BASE_MODEL_DIR}")
+            return
+            
+        subdirs = [d for d in os.listdir(BASE_MODEL_DIR) if os.path.isdir(os.path.join(BASE_MODEL_DIR, d))]
+        if not subdirs:
+            print(f"No model folders found in {BASE_MODEL_DIR}")
+            return
+            
+        # Sort by name (which acts as sort by timestamp)
+        subdirs.sort() 
+        MODEL_ID = subdirs[-1]
+        print(f"Auto-selected Latest Model ID: {MODEL_ID}")
+    else:
+        print(f"Using Specified Model ID: {MODEL_ID}")
+
+    # Define Paths based on Model ID
+    MODEL_DIR = os.path.join(BASE_MODEL_DIR, MODEL_ID)
+    RESULTS_DIR = os.path.join(MODEL_DIR, 'results')
+    os.makedirs(RESULTS_DIR, exist_ok=True)
+    
     # Check if model exists
-    if not os.path.exists(MODEL_PATH + ".zip"):
-        print(f"Model file {MODEL_PATH}.zip not found. Please train the model first.")
+    # Prioritize Best Model
+    BEST_MODEL_PATH = os.path.join(MODEL_DIR, 'best_model')
+    FINAL_MODEL_PATH = os.path.join(MODEL_DIR, f'{AGENT.lower()}_intraday_model_final')
+    OLD_MODEL_PATH = os.path.join(MODEL_DIR, f'{AGENT.lower()}_intraday_model') # Backward compatibility
+
+    if os.path.exists(BEST_MODEL_PATH + ".zip"):
+        LOAD_PATH = BEST_MODEL_PATH
+        print(f"Loading BEST model from {LOAD_PATH}...")
+    elif os.path.exists(FINAL_MODEL_PATH + ".zip"):
+        LOAD_PATH = FINAL_MODEL_PATH
+        print(f"Loading FINAL model from {LOAD_PATH}...")
+    elif os.path.exists(OLD_MODEL_PATH + ".zip"):
+        LOAD_PATH = OLD_MODEL_PATH
+        print(f"Loading STANDARD model from {LOAD_PATH}...")
+    else:
+        print(f"No model file found in {MODEL_DIR}. Please train the model first.")
         return
 
-    print(f"Loading model from {MODEL_PATH}...")
-    model = PPO.load(MODEL_PATH)
+    model = PPO.load(LOAD_PATH)
 
     daily_results = []
     
@@ -86,6 +124,10 @@ def main():
             'return_pct': round(return_pct, 4)
         })
         
+        # # Date-wise reporting
+        # date_str = current_date_obj.strftime("%Y-%m-%d") if hasattr(current_date_obj, 'strftime') else str(current_date_obj)
+        # print(f"Date: {date_str} | PnL: {final_pnl:8.2f} | DD: {max_dd:8.2f} | Trades: {trade_count}")
+
         if (i+1) % 10 == 0:
             print(f"Processed {i+1}/{total_dates} days...")
 

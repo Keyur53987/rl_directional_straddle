@@ -64,14 +64,22 @@ def plot_results(log_folder, save_folder, title='Learning Curve'):
 
 def main():
     # Configuration
+    import datetime
+    TIMESTAMP = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    
     MODE = 'add'  # 'add' or 'ratio'
     AGENT = 'PPO' # Agent Name
-    SAVE_DIR = os.path.join('model', AGENT)
+    
+    # Structure: model/PPO/{TIMESTAMP}/
+    BASE_DIR = os.path.join('model', AGENT)
+    SAVE_DIR = os.path.join(BASE_DIR, TIMESTAMP)
+    
+    # Artifacts inside the timestamped folder
     SAVE_PATH = os.path.join(SAVE_DIR, f'{AGENT.lower()}_intraday_model')
     LOG_DIR = os.path.join(SAVE_DIR, 'logs')
     DATA_PATH = 'data/train.csv'
-    START_DATE = "2020-01-01"  # Format: 'YYYY-MM-DD'
-    END_DATE = "2020-12-31"    # Format: 'YYYY-MM-DD'
+    START_DATE = "2015-01-01"  # Training: 6 Years
+    END_DATE = "2020-12-31"    # Validation is 2021 (set below)
     NUM_ENVS = 1 # Number of parallel environments (adjust based on CPU cores)
 
     # Create directories
@@ -100,18 +108,56 @@ def main():
             monitor_dir=LOG_DIR  # Automatically wraps with Monitor
         )
 
+        # Create Validation Environment (Prevent Overfitting)
+        # We use a separate time period (e.g., 2021) to evaluate the model
+        # The 'best_model' will be saved based on performance in THIS environment, not the training one.
+        VAL_START_DATE = "2021-01-01"
+        VAL_END_DATE = "2021-12-31" # 1 year validation
+        
+        print(f"Creating Validation Environment ({VAL_START_DATE} to {VAL_END_DATE})...")
+        eval_env_kwargs = {
+            'data_path': DATA_PATH, 
+            'mode': MODE, 
+            'start_date': VAL_START_DATE, 
+            'end_date': VAL_END_DATE
+        }
+        # Eval env doesn't need to be vectorized, but Monitor is crucial for EvalCallback to read stats
+        eval_env = IntradayOptionEnv(**eval_env_kwargs)
+        eval_env = Monitor(eval_env, os.path.join(SAVE_DIR, 'eval_monitor'))
+
+        from stable_baselines3.common.callbacks import EvalCallback, CheckpointCallback
+
+        # Callbacks for Model Management
+        # eval_freq: Evaluate every 5000 steps (approx 13 trading days of 375 steps)
+        # best_model_save_path: Where to save the model driven by validation performance
+        eval_callback = EvalCallback(eval_env, best_model_save_path=SAVE_DIR,
+                                     log_path=LOG_DIR, eval_freq=5000,
+                                     deterministic=True, render=False)
+        
+        checkpoint_callback = CheckpointCallback(save_freq=10000, save_path=SAVE_DIR,
+                                                 name_prefix=f'{AGENT.lower()}_intraday_checkpoint')
+
         print("Training PPO Agent...")
         # User-customized training parameters for 1-minute data
         model = PPO("MlpPolicy", env, verbose=1, learning_rate=0.0003, n_steps=10000 // NUM_ENVS, batch_size=1000, gamma=0.99, tensorboard_log=LOG_DIR, device='cpu')
-        model.learn(total_timesteps=1000000)
+        
+        # training with callbacks
+        model.learn(total_timesteps=1000000, callback=[eval_callback, checkpoint_callback])
         print("Training Finished.")
         
-        model.save(SAVE_PATH)
-        print(f"Model saved to {SAVE_PATH}")
+        # Save final model as well
+        final_model_path = os.path.join(SAVE_DIR, f'{AGENT.lower()}_intraday_model_final')
+        model.save(final_model_path)
+        print(f"Final Model saved to {final_model_path}")
         
         # Plotting Results
         print("Generating training plots...")
         plot_results(LOG_DIR, SAVE_DIR)
+        
+        print("-" * 50)
+        print(f"TRAINING COMPLETE. Model ID: {TIMESTAMP}")
+        print(f"Model saved at: {SAVE_DIR}")
+        print("-" * 50)
         
     except ImportError:
         print("Stable-Baselines3 not found. Falling back to Random Agent.")
