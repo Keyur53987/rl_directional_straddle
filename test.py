@@ -55,10 +55,11 @@ def main():
             steps += 1
             
             # Count Adjustments as trades
-            if np.sum(action) > 0: # Check if any action taken (Add=1, Offload=2)
-                trade_count += 1
+            # Fixed: Only count executed trades from env logs, not just attempts
+            pass
             
         # End of Episode Metrics
+        trade_count = len(env.trade_logs)
         current_date_obj = env.dates[env.current_date_idx]
         final_pnl = env.pnl_curve[-1]
         peak_pnl = env.peak_pnl
