@@ -25,9 +25,10 @@ ATR_MULTIPLIER = 1.5           # Multiplier for ATR-based gap
 EXPIRY_DAY_OF_WEEK = 1         # 0=Mon, 1=Tue, 2=Wed, 3=Thu, 4=Fri
 
 # RL Reward Settings
-REWARD_LAMBDA = 0.5            # Penalty weight for drawdown
+REWARD_LAMBDA = 0.2            # Penalty weight for drawdown
+FORCED_EXIT_PENALTY = 1000.0   # Penalty for not exiting manually before EOD
 
 # Environment Settings (1-minute data)
 WINDOW_SIZE = 150              # Lookback window for state features (150 minutes = 2.5 hours)
 RISK_FREE_RATE = 0.06          # Annual risk-free rate
-IV_ESTIMATE = 0.15             # Constant IV for simulation if not provided
+IV_ESTIMATE = 0.15             # Constant IV for simulation if not provided # Change it with Newton-Raplphson method

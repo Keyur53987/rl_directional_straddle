@@ -1,0 +1,51 @@
+# Scaling Training to 20 Cores & optimizing Data
+
+## Goal Description
+Scale the PPO training configuration to utilize 20 CPU cores effectively and configure the data split to use the most recent 5 years of data (ending mid-2025).
+
+## Proposed Changes
+### RL Configuration
+#### [MODIFY] [train.py](file:///c:/Users/Admin/OneDrive/Desktop/MAI/Thesis/Code/Deep-Hedging/rl_directional_straddle/train.py)
+- **Parallelism**:
+    - `NUM_ENVS`: `20`
+    - `n_steps`: `512` (Total buffer: 10,240 steps per update)
+    - `batch_size`: `2048`
+    - `total_timesteps`: `20_000_000` (20 Million steps ~ Sufficient for convergence with this complexity)
+
+- **Data Split (Whole Years + Latest 1.5Y)**:
+    - **Testing**: `2024-01-01` to `2025-07-31` (Latest ~1.5 Years)
+    - **Validation**: `2023-01-01` to `2023-12-31` (1 Full Year)
+    - **Training**: `2020-01-01` to `2022-12-31` (3 Full Years)
+
+## Hyperparameter Experiments
+Run these experiments sequentially to find the best model. Ensure **Fixed Baseline** (`NUM_ENVS=20`, `n_steps=512`) is applied for all.
+
+| Experiment | Values to Try | Expected Behavior |
+| :--- | :--- | :--- |
+| **A. Balanced** (Baseline) | `learning_rate=0.0003` <br> `force_entry=0.50` <br> `REWARD_LAMBDA=0.2` <br> `ent_coef=0.01` | **Standard Learning.** Balanced between exploring new moves and exploiting known profits. Good starting point. |
+| **B. Risk-Hedge** | `learning_rate=0.0003` <br> `force_entry=0.50` <br> **`REWARD_LAMBDA=1.0`** <br> `ent_coef=0.01` | **Conservative.** Punishes drawdowns heavily. Agent should learn to hedge or exit early to protect capital. |
+| **C. Entry-Sniper** | `learning_rate=0.0001` <br> **`force_entry=0.10`** <br> `REWARD_LAMBDA=0.2` <br> `ent_coef=0.01` | **Self-Reliant.** Forces agent to find its own entries (no teacher forcing). Lower LR ensures it learns carefully. |
+
+> [!TIP]
+> **Tuning `ent_coef`**: If any experiment results in the agent "doing nothing" (0 trades), increase `ent_coef` to `0.05` to force it to explore.
+
+## Detailed Hyperparameter Reference
+
+| Hyperparameter | Current Value | **Recommended Values to Try** | Why it matters? |
+| :--- | :--- | :--- | :--- |
+| **`learning_rate`** | `0.0003` | `0.0001`, **`0.0003`**, `0.001` | Controls how fast the model learns. Too high = unstable; too low = slow. |
+| **`n_steps`** | `2048` | `512`, `1024`, **`2048`** | **With 20 cores:** stick to `512` (10k buffer) or `2048` (40k buffer). |
+| **`batch_size`** | `512` | `512`, `1024`, **`2048`** | Larger batches (2048) are better for gradient stability on noisy market data. |
+| **`gamma`** | `0.99` | `0.95`, **`0.99`**, `0.995` | Discount factor. Lower (`0.95`) focuses on short-term profit; higher (`0.995`) on long-term trends. |
+| **`ent_coef`** | `0.0` (Default) | `0.0`, **`0.01`**, `0.05` | **Entropy Coefficient.** Encourages exploration. *Critical for trading* to prevent getting stuck in "always hold". |
+| **`clip_range`** | `0.2` (Default) | `0.1`, **`0.2`**, `0.3` | Prevents the policy from changing too drastically in one update. |
+| **`gae_lambda`** | `0.95` (Default) | `0.90`, **`0.95`**, `0.98` | Controls trade-off between bias and variance. |
+| **`force_entry_prob`** | `0.50` | `0.10`, **`0.50`**, `0.90` | **Teacher Forcing.** Higher (`0.90`) forces the agent to learn "how to manage a trade". Lower (`0.10`) forces "when to enter". |
+| **`REWARD_LAMBDA`** | `0.2` | `0.1`, **`0.5`**, `1.0` | **Risk Aversion.** Higher values make the agent hate drawdowns more. |
+
+## Verification Plan
+### Manual Verification
+- Run `python train.py` and verify:
+    - Parallel envs start.
+    - Date ranges are printed correctly in log.
+    - Training loop begins.

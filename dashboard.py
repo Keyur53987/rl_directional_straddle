@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -16,7 +15,8 @@ st.set_page_config(page_title="RL Trading Simulation", layout="wide")
 @st.cache_resource
 def load_resources():
     # Model
-    model_path = os.path.join('model', 'PPO', 'ppo_intraday_model')
+    model_name = "20260121_125741"
+    model_path = os.path.join('model', 'PPO', model_name, 'best_model')
     try:
         model = PPO.load(model_path)
     except Exception as e:
@@ -60,7 +60,7 @@ st.title(f"Intraday RL Simulation: {strategy_type} Strategy")
 
 if run_btn and selected_date and model:
     try:
-        env = IntradayOptionEnv(data_path=data_path, mode='add')
+        env = IntradayOptionEnv(data_path=data_path)
         
         # Find index
         date_idx = -1

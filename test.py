@@ -2,7 +2,7 @@ import gymnasium as gym
 import numpy as np
 import pandas as pd
 from stable_baselines3 import PPO
-from envs.intraday_option_env import IntradayOptionEnv
+from envs.intraday_option_env_v2 import IntradayOptionEnv_V2 as IntradayOptionEnv 
 import config
 import os
 import datetime
@@ -11,19 +11,33 @@ def main():
     # Configuration
     AGENT = 'PPO'
     DATA_PATH = 'data/test.csv'
-    MODE = 'add'
     START_DATE = "2025-01-01"  # User can filter range
     END_DATE = "2025-12-31"    # User can filter range
 
-    print(f"Loading Environment with Mode: {MODE}")
-    env = IntradayOptionEnv(data_path=DATA_PATH, mode=MODE, start_date=START_DATE, end_date=END_DATE)
+    # Optional: Set this to a specific timestamp (e.g., "20231027_103000") to load a specific old model.
+    # If None, it automatically finds the latest one.
+    MODEL_ID = "20260129_200415"
+    # Set Random Seeds for Determinism
+    SEED = 42
+    import random
+    import torch
+    
+    random.seed(SEED)
+    np.random.seed(SEED)
+    torch.manual_seed(SEED)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(SEED)
+    
+    # Ensure deterministic behavior in PyTorch (optional, slightly slower)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+    print(f"Loading Environment....")
+    # Testing Phase: 0% Forced Entry, 100% Agent Decided
+    env = IntradayOptionEnv(data_path=DATA_PATH, start_date=START_DATE, end_date=END_DATE, force_entry_prob=0.0)
 
     # --- Model Selection Logic ---
     BASE_MODEL_DIR = os.path.join('model', AGENT)
-    
-    # Optional: Set this to a specific timestamp (e.g., "20231027_103000") to load a specific old model.
-    # If None, it automatically finds the latest one.
-    MODEL_ID = None 
     
     if MODEL_ID is None:
         # Find the latest timestamped folder

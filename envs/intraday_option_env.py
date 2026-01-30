@@ -11,7 +11,7 @@ from utils.feature_calculator import FeatureCalculator
 class IntradayOptionEnv(gym.Env):
     metadata = {'render.modes': ['human']}
 
-    def __init__(self, data_path='data/sample_intraday.csv', mode='add', start_date=None, end_date=None):
+    def __init__(self, data_path='data/sample_intraday.csv', start_date=None, end_date=None):
         super(IntradayOptionEnv, self).__init__()
         
         self.df = pd.read_csv(data_path)
@@ -24,7 +24,6 @@ class IntradayOptionEnv(gym.Env):
             self.df = self.df[self.df['datetime'] <= pd.to_datetime(end_date)]
             
         self.dates = self.df['datetime'].dt.date.unique()
-        self.mode = mode  # 'add' or 'ratio' (Legacy param, but keeping for compatibility)
         
         # Action Space: MultiDiscrete([3, 3])
         # [Call Action, Put Action]
@@ -161,6 +160,61 @@ class IntradayOptionEnv(gym.Env):
         ce_action = action[0]
         pe_action = action[1]
         
+        # --- Ratio Maintenance Logic (Prevent Naked Positions) ---
+        # Calculate tentative future lots
+        future_ce_lots = self.ce_lots
+        if ce_action == 1: future_ce_lots += 1 #Buy
+        elif ce_action == 2 and self.ce_lots > 0: future_ce_lots -= 1 #sell
+        
+        future_pe_lots = self.pe_lots
+        if pe_action == 1: future_pe_lots += 1 #Buy
+        elif pe_action == 2 and self.pe_lots > 0: future_pe_lots -= 1 #sell
+        
+        # Check constraints
+        is_naked_call = (future_ce_lots > 0 and future_pe_lots == 0)
+        is_naked_put = (future_pe_lots > 0 and future_ce_lots == 0)
+        
+        if is_naked_call:
+            # Revert action that caused naked call
+            if self.pe_lots == 0 and pe_action != 1: 
+                # Case: Trying to buy CE but not PE. Block CE buy.
+                if ce_action == 1: ce_action = 0 # Force Hold
+            elif self.pe_lots > 0 and future_pe_lots == 0:
+                 # Case: Selling last PE while keeping CE. Block PE sell.
+                 if pe_action == 2: pe_action = 0 # Force Hold
+                 
+            # Double check if still naked (e.g. if we reverted one but other condition persists?)
+            # Actually, simpler logic:
+            # If Result is Naked Call -> Cancel the CE Buy OR Cancel the PE Sell
+        
+        if is_naked_put:
+             if self.ce_lots == 0 and ce_action != 1:
+                 if pe_action == 1: pe_action = 0
+             elif self.ce_lots > 0 and future_ce_lots == 0:
+                 if ce_action == 2: ce_action = 0
+                 
+        # Re-calc check for safety/simplicity in one block:
+        # If [1, 0] from [0, 0] -> Future [1, 0] (Naked Call). 
+        #   Action causing it is CE=1. Revert CE=1 to 0.
+        # If [2, 0] from [1, 1] -> Future [0, 1] (Naked Put).
+        #   Action causing it is CE=2. Revert CE=2 to 0.
+        
+        # Final Robust Implementation:
+        future_ce_lots = self.ce_lots + (1 if ce_action==1 else (-1 if (ce_action==2 and self.ce_lots>0) else 0))
+        future_pe_lots = self.pe_lots + (1 if pe_action==1 else (-1 if (pe_action==2 and self.pe_lots>0) else 0))
+        
+        if future_ce_lots > 0 and future_pe_lots == 0:
+            # Block the move creating asymmetry
+            # If we bought CE, cancel buy
+            if ce_action == 1 and self.ce_lots == future_ce_lots - 1: ce_action = 0
+            # If we sold PE, cancel sell
+            if pe_action == 2 and self.pe_lots == future_pe_lots + 1: pe_action = 0
+            
+        if future_pe_lots > 0 and future_ce_lots == 0:
+            if pe_action == 1 and self.pe_lots == future_pe_lots - 1: pe_action = 0
+            if ce_action == 2 and self.ce_lots == future_ce_lots + 1: ce_action = 0
+        # ---------------------------------------------------------
+        
         current_step_row = self.day_data.iloc[self.current_step]
         current_price = current_step_row['close']
         current_time = current_step_row['datetime']
@@ -187,6 +241,8 @@ class IntradayOptionEnv(gym.Env):
         # ce_action == 0 (HOLD)
         if ce_action == 1: # ADD (BUY)
             cost = ce_price_curr * 1 * config.LOT_SIZE
+            transaction_cost = cost * config.TRANSACTION_COST_PCT
+            cost += transaction_cost
             if self.ce_lots < config.MAX_LOTS and cost <= available_cash:
                 # Weighted Average Price
                 total_cost = (self.entry_price_ce * self.ce_lots) + (ce_price_curr * 1)
@@ -195,6 +251,8 @@ class IntradayOptionEnv(gym.Env):
                 
                 # Update Available Cash immediately for next leg check
                 available_cash -= cost
+                self.realized_pnl -= transaction_cost # Transaction cost is immediate loss
+                
                 self.trade_logs.append({
                     'timestamp': current_time,
                     'leg': 'CE',
@@ -212,6 +270,9 @@ class IntradayOptionEnv(gym.Env):
                 pnl_per_lot = (ce_price_curr - self.entry_price_ce) * 1 * config.LOT_SIZE
                 if config.STRATEGY_TYPE == 'SHORT': 
                      pnl_per_lot = (self.entry_price_ce - ce_price_curr) * 1 * config.LOT_SIZE
+                
+                transaction_cost = (ce_price_curr * 1 * config.LOT_SIZE) * config.TRANSACTION_COST_PCT
+                pnl_per_lot -= transaction_cost
                 
                 self.realized_pnl += pnl_per_lot
                 self.ce_lots -= 1
@@ -239,11 +300,14 @@ class IntradayOptionEnv(gym.Env):
         # pe_action == 0 (HOLD)
         if pe_action == 1: # ADD (BUY)
             cost = pe_price_curr * 1 * config.LOT_SIZE
+            transaction_cost = cost * config.TRANSACTION_COST_PCT
+            cost += transaction_cost
             if self.pe_lots < config.MAX_LOTS and cost <= available_cash:
                 total_cost = (self.entry_price_pe * self.pe_lots) + (pe_price_curr * 1)
                 self.pe_lots += 1
                 self.entry_price_pe = total_cost / self.pe_lots
                 available_cash -= cost
+                self.realized_pnl -= transaction_cost
                 
                 self.trade_logs.append({
                     'timestamp': current_time,
@@ -262,6 +326,9 @@ class IntradayOptionEnv(gym.Env):
                 if config.STRATEGY_TYPE == 'SHORT':
                      pnl_per_lot = (self.entry_price_pe - pe_price_curr) * 1 * config.LOT_SIZE
                 
+                transaction_cost = (pe_price_curr * 1 * config.LOT_SIZE) * config.TRANSACTION_COST_PCT
+                pnl_per_lot -= transaction_cost
+
                 self.realized_pnl += pnl_per_lot
                 self.pe_lots -= 1
                 if self.pe_lots == 0: self.entry_price_pe = 0
@@ -320,14 +387,30 @@ class IntradayOptionEnv(gym.Env):
             if config.STRATEGY_TYPE == 'SHORT':
                 pnl_ce = (self.entry_price_ce - ce_price) * self.ce_lots * config.LOT_SIZE
                 pnl_pe = (self.entry_price_pe - pe_price) * self.pe_lots * config.LOT_SIZE
+            
+            # Apply Transaction Costs to Auto-Close
+            cost_ce = (ce_price * self.ce_lots * config.LOT_SIZE) * config.TRANSACTION_COST_PCT
+            cost_pe = (pe_price * self.pe_lots * config.LOT_SIZE) * config.TRANSACTION_COST_PCT
+            
+            pnl_ce -= cost_ce
+            pnl_pe -= cost_pe
                 
             self.realized_pnl += (pnl_ce + pnl_pe)
+            
+            # Forced Exit Penalty
+            # If we had open positions that were auto-closed, we penalize the agent.
+            penalty = 0.0
+            if self.ce_lots > 0 or self.pe_lots > 0:
+                penalty = config.FORCED_EXIT_PENALTY
             
             # Close positions
             self.ce_lots = 0 
             self.pe_lots = 0
             # Note: We don't log "Close All" as individual trades yet, but ideally should for perfection.
             # Leaving as is for now to avoid complexity in End Logic.
+            
+        else:
+            penalty = 0.0 # No penalty if not forced exit
             
         # --- CALCULATE REWARD ---
         # Unrealized PnL
@@ -348,7 +431,7 @@ class IntradayOptionEnv(gym.Env):
         
         # Reward
         step_pnl = self.pnl_curve[-1] - self.pnl_curve[-2]
-        reward = step_pnl - (config.REWARD_LAMBDA * drawdown)
+        reward = step_pnl - (config.REWARD_LAMBDA * drawdown) - penalty
         
         # Normalize reward roughly
         reward /= 1000.0

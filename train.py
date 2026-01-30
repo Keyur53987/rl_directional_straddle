@@ -1,4 +1,5 @@
 import gymnasium as gym
+import json
 import numpy as np
 import pandas as pd
 from envs.intraday_option_env import IntradayOptionEnv
@@ -65,9 +66,22 @@ def plot_results(log_folder, save_folder, title='Learning Curve'):
 def main():
     # Configuration
     import datetime
+    # import random
+    # import torch
+    
+    # # Set Random Seeds for Reproducibility
+    # SEED = 42
+    # random.seed(SEED)
+    # np.random.seed(SEED)
+    # torch.manual_seed(SEED)
+    # if torch.cuda.is_available():
+    #     torch.cuda.manual_seed_all(SEED)
+    # torch.backends.cudnn.deterministic = True
+    # torch.backends.cudnn.benchmark = False
+    
     TIMESTAMP = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     
-    MODE = 'add'  # 'add' or 'ratio'
+    # MODE = 'add'  # 'add' or 'ratio'
     AGENT = 'PPO' # Agent Name
     
     # Structure: model/PPO/{TIMESTAMP}/
@@ -78,15 +92,15 @@ def main():
     SAVE_PATH = os.path.join(SAVE_DIR, f'{AGENT.lower()}_intraday_model')
     LOG_DIR = os.path.join(SAVE_DIR, 'logs')
     DATA_PATH = 'data/train.csv'
-    START_DATE = "2015-01-01"  # Training: 6 Years
-    END_DATE = "2020-12-31"    # Validation is 2021 (set below)
-    NUM_ENVS = 1 # Number of parallel environments (adjust based on CPU cores)
+    START_DATE = "2021-01-01"  # Training: 6 Years
+    END_DATE = "2023-12-31"    # Validation is 2021 (set below)
+    NUM_ENVS = 4  # Number of parallel environments (adjust based on CPU cores)
 
     # Create directories
     os.makedirs(SAVE_DIR, exist_ok=True)
     os.makedirs(LOG_DIR, exist_ok=True)
 
-    print(f"Starting {NUM_ENVS} Parallel Environments with Mode: {MODE}")
+    print(f"Starting {NUM_ENVS} Parallel Environments.")
     print(f"Using SubprocVecEnv for multiprocessing speedup.")
 
     try:
@@ -94,7 +108,6 @@ def main():
         # We need to pass lambda function to make_vec_env
         env_kwargs = {
             'data_path': DATA_PATH, 
-            'mode': MODE, 
             'start_date': START_DATE, 
             'end_date': END_DATE
         }
@@ -111,13 +124,12 @@ def main():
         # Create Validation Environment (Prevent Overfitting)
         # We use a separate time period (e.g., 2021) to evaluate the model
         # The 'best_model' will be saved based on performance in THIS environment, not the training one.
-        VAL_START_DATE = "2021-01-01"
-        VAL_END_DATE = "2021-12-31" # 1 year validation
+        VAL_START_DATE = "2024-01-01"
+        VAL_END_DATE = "2024-12-31" # 1 year validation
         
         print(f"Creating Validation Environment ({VAL_START_DATE} to {VAL_END_DATE})...")
         eval_env_kwargs = {
             'data_path': DATA_PATH, 
-            'mode': MODE, 
             'start_date': VAL_START_DATE, 
             'end_date': VAL_END_DATE
         }
@@ -139,16 +151,72 @@ def main():
 
         print("Training PPO Agent...")
         # User-customized training parameters for 1-minute data
-        model = PPO("MlpPolicy", env, verbose=1, learning_rate=0.0003, n_steps=10000 // NUM_ENVS, batch_size=1000, gamma=0.99, tensorboard_log=LOG_DIR, device='cpu')
+        learning_rate = 0.0003
+        n_steps = 2048
+        batch_size = 512
+        gamma = 0.99
+        total_timesteps = 1000000
+        
+        model = PPO("MlpPolicy", env,seed=42, verbose=1, learning_rate=learning_rate, n_steps=n_steps, batch_size=batch_size, gamma=gamma, tensorboard_log=LOG_DIR, device='cuda')
         
         # training with callbacks
-        model.learn(total_timesteps=1000000, callback=[eval_callback, checkpoint_callback])
+        # training with callbacks
+        model.learn(total_timesteps=total_timesteps, callback=[eval_callback, checkpoint_callback], progress_bar=True)
         print("Training Finished.")
         
         # Save final model as well
         final_model_path = os.path.join(SAVE_DIR, f'{AGENT.lower()}_intraday_model_final')
         model.save(final_model_path)
         print(f"Final Model saved to {final_model_path}")
+        
+        # Save Metadata
+        metadata = {
+            "timestamp": TIMESTAMP,
+            "agent": AGENT,
+            "training_data": {
+                "path": DATA_PATH,
+                "start_date": START_DATE,
+                "end_date": END_DATE,
+            },
+            "validation_data": {
+                "start_date": VAL_START_DATE,
+                "end_date": VAL_END_DATE,
+            },
+            "environment_parameters": env_kwargs,
+            "evaluation_environment_parameters": eval_env_kwargs,
+            "model_parameters": {
+                "policy": "MlpPolicy",
+                "learning_rate": learning_rate,
+                "n_steps": n_steps,
+                "batch_size": batch_size,
+                "gamma": gamma,
+                "total_timesteps": total_timesteps
+            },
+            "config_parameters": {
+                "INITIAL_CAPITAL": config.INITIAL_CAPITAL,
+                "MAX_LOTS": config.MAX_LOTS,
+                "TRANSACTION_COST_PCT": config.TRANSACTION_COST_PCT,
+                "SLIPPAGE_PCT": config.SLIPPAGE_PCT,
+                "START_TIME": config.START_TIME,
+                "END_TIME": config.END_TIME,
+                "STRADDLE_STRIKE_GAP": config.STRADDLE_STRIKE_GAP,
+                "LOT_SIZE": config.LOT_SIZE,
+                "STRATEGY_TYPE": config.STRATEGY_TYPE,
+                "STRIKE_SELECTION_METHOD": config.STRIKE_SELECTION_METHOD,
+                "BOLLINGER_STD": config.BOLLINGER_STD,
+                "ATR_MULTIPLIER": config.ATR_MULTIPLIER,
+                "EXPIRY_DAY_OF_WEEK": config.EXPIRY_DAY_OF_WEEK,
+                "REWARD_LAMBDA": config.REWARD_LAMBDA,
+                "WINDOW_SIZE": config.WINDOW_SIZE,
+                "RISK_FREE_RATE": config.RISK_FREE_RATE,
+                "IV_ESTIMATE": config.IV_ESTIMATE
+            }
+        }
+        
+        metadata_path = os.path.join(SAVE_DIR, 'metadata.json')
+        with open(metadata_path, 'w') as f:
+            json.dump(metadata, f, indent=4)
+        print(f"Metadata saved to {metadata_path}")
         
         # Plotting Results
         print("Generating training plots...")
@@ -159,8 +227,10 @@ def main():
         print(f"Model saved at: {SAVE_DIR}")
         print("-" * 50)
         
-    except ImportError:
-        print("Stable-Baselines3 not found. Falling back to Random Agent.")
+    except ImportError as e:
+        print(f"ImportError details: {e}")
+        import traceback
+        traceback.print_exc()
         
     except Exception as e:
         print(f"An error occurred: {e}")
