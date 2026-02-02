@@ -58,6 +58,42 @@ class IntradayOptionEnv(gym.Env):
         self.day_high = 0.0
         self.day_low = float('inf')
         
+    def _get_current_volatility(self):
+        """
+        Get current realized volatility to use as IV proxy.
+        Falls back to config.IV_ESTIMATE if realized vol is not available.
+        """
+        # We need historical data to calculate volatility
+        hist_data = self.day_data.iloc[:self.current_step+1]
+        
+        if len(hist_data) < 5:
+             return config.IV_ESTIMATE
+             
+        closes = hist_data['close'].values
+        highs = hist_data['high'].values
+        lows = hist_data['low'].values
+        opens = hist_data['open'].values
+        
+        # Calculate Volatility Features
+        vol_features = self.feature_calc.calculate_volatility_features(
+            closes, highs, lows, opens, closes
+        )
+        
+        # Use 30min rolling vol as primary proxy
+        vol = vol_features.get('rolling_vol_30min', 0.0)
+        
+        # Fallback logic if 30min vol is not available or too low (e.g. at start of day)
+        if vol < 1e-4:
+             vol = vol_features.get('rolling_vol_15min', 0.0)
+             
+        if vol < 1e-4:
+             vol = vol_features.get('rolling_vol_5min', 0.0)
+             
+        if vol < 1e-4:
+             return config.IV_ESTIMATE
+             
+        return vol
+        
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
         
@@ -134,11 +170,14 @@ class IntradayOptionEnv(gym.Env):
         self.pe_lots = 1
         
         # Use Black-Scholes for option pricing
+        # Dynamic IV Calculation
+        current_iv = self._get_current_volatility()
+        
         time_to_expiry = self._get_time_to_expiry(self.day_data.iloc[self.current_step]['datetime'])
         ce_bs = black_scholes(current_price, self.ce_strike, time_to_expiry, 
-                              config.RISK_FREE_RATE, config.IV_ESTIMATE, 'call')
+                              config.RISK_FREE_RATE, current_iv, 'call')
         pe_bs = black_scholes(current_price, self.pe_strike, time_to_expiry, 
-                              config.RISK_FREE_RATE, config.IV_ESTIMATE, 'put')
+                              config.RISK_FREE_RATE, current_iv, 'put')
         
         self.entry_price_ce = ce_bs['price']
         self.entry_price_pe = pe_bs['price']
@@ -220,9 +259,12 @@ class IntradayOptionEnv(gym.Env):
         current_time = current_step_row['datetime']
         time_to_expiry = self._get_time_to_expiry(current_time)
         
+        # Dynamic IV
+        current_iv = self._get_current_volatility()
+        
         # Calculate current option prices
-        ce_bs_curr = black_scholes(current_price, self.ce_strike, time_to_expiry, config.RISK_FREE_RATE, config.IV_ESTIMATE, 'call')
-        pe_bs_curr = black_scholes(current_price, self.pe_strike, time_to_expiry, config.RISK_FREE_RATE, config.IV_ESTIMATE, 'put')
+        ce_bs_curr = black_scholes(current_price, self.ce_strike, time_to_expiry, config.RISK_FREE_RATE, current_iv, 'call')
+        pe_bs_curr = black_scholes(current_price, self.pe_strike, time_to_expiry, config.RISK_FREE_RATE, current_iv, 'put')
         ce_price_curr = ce_bs_curr['price']
         pe_price_curr = pe_bs_curr['price']
         
@@ -368,8 +410,14 @@ class IntradayOptionEnv(gym.Env):
             current_time = next_row['datetime']
             current_price = next_row['close']
             time_to_expiry = self._get_time_to_expiry(current_time)
-            ce_price = black_scholes(current_price, self.ce_strike, time_to_expiry, config.RISK_FREE_RATE, config.IV_ESTIMATE, 'call')['price']
-            pe_price = black_scholes(current_price, self.pe_strike, time_to_expiry, config.RISK_FREE_RATE, config.IV_ESTIMATE, 'put')['price']
+            
+            # Dynamic IV for PnL update
+            # Note: _get_current_volatility depends on self.current_step, which was just incremented.
+            # So this will use the volatility including the new step.
+            current_iv = self._get_current_volatility()
+            
+            ce_price = black_scholes(current_price, self.ce_strike, time_to_expiry, config.RISK_FREE_RATE, current_iv, 'call')['price']
+            pe_price = black_scholes(current_price, self.pe_strike, time_to_expiry, config.RISK_FREE_RATE, current_iv, 'put')['price']
         else:
             # End of data
             done = True
@@ -566,10 +614,14 @@ class IntradayOptionEnv(gym.Env):
         
         # 3. Greeks (10 features) - Using Black-Scholes
         time_to_expiry = self._get_time_to_expiry(current_time)
+        
+        # Use Dynamic IV for consistent Greeks
+        current_iv = self._get_current_volatility()
+        
         ce_greeks = black_scholes(current_price, self.ce_strike, time_to_expiry,
-                                 config.RISK_FREE_RATE, config.IV_ESTIMATE, 'call')
+                                 config.RISK_FREE_RATE, current_iv, 'call')
         pe_greeks = black_scholes(current_price, self.pe_strike, time_to_expiry,
-                                 config.RISK_FREE_RATE, config.IV_ESTIMATE, 'put')
+                                 config.RISK_FREE_RATE, current_iv, 'put')
         
         position_greeks = calculate_position_greeks(
             ce_greeks, pe_greeks, self.ce_lots, self.pe_lots, config.LOT_SIZE
