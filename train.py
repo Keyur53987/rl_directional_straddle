@@ -66,18 +66,18 @@ def plot_results(log_folder, save_folder, title='Learning Curve'):
 def main():
     # Configuration
     import datetime
-    # import random
-    # import torch
+    import random
+    import torch
     
-    # # Set Random Seeds for Reproducibility
-    # SEED = 42
-    # random.seed(SEED)
-    # np.random.seed(SEED)
-    # torch.manual_seed(SEED)
-    # if torch.cuda.is_available():
-    #     torch.cuda.manual_seed_all(SEED)
-    # torch.backends.cudnn.deterministic = True
-    # torch.backends.cudnn.benchmark = False
+    # Set Random Seeds for Reproducibility
+    SEED = 42
+    random.seed(SEED)
+    np.random.seed(SEED)
+    torch.manual_seed(SEED)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(SEED)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
     
     TIMESTAMP = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     
@@ -92,8 +92,8 @@ def main():
     SAVE_PATH = os.path.join(SAVE_DIR, f'{AGENT.lower()}_intraday_model')
     LOG_DIR = os.path.join(SAVE_DIR, 'logs')
     DATA_PATH = 'data/train.csv'
-    START_DATE = "2021-01-01"  # Training: 6 Years
-    END_DATE = "2023-12-31"    # Validation is 2021 (set below)
+    START_DATE = "2025-01-01"  # Training: 6 Years
+    END_DATE = "2025-01-31"    # Validation is 2021 (set below)
     NUM_ENVS = 4  # Number of parallel environments (adjust based on CPU cores)
 
     # Create directories
@@ -124,8 +124,8 @@ def main():
         # Create Validation Environment (Prevent Overfitting)
         # We use a separate time period (e.g., 2021) to evaluate the model
         # The 'best_model' will be saved based on performance in THIS environment, not the training one.
-        VAL_START_DATE = "2024-01-01"
-        VAL_END_DATE = "2024-12-31" # 1 year validation
+        VAL_START_DATE = "2025-02-15"
+        VAL_END_DATE = "2025-02-28" # 1 year validation
         
         print(f"Creating Validation Environment ({VAL_START_DATE} to {VAL_END_DATE})...")
         eval_env_kwargs = {
@@ -155,7 +155,7 @@ def main():
         n_steps = 2048
         batch_size = 512
         gamma = 0.99
-        total_timesteps = 1000000
+        total_timesteps = 1_00_000
         
         model = PPO("MlpPolicy", env,seed=42, verbose=1, learning_rate=learning_rate, n_steps=n_steps, batch_size=batch_size, gamma=gamma, tensorboard_log=LOG_DIR, device='cuda')
         

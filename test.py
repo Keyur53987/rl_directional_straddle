@@ -2,7 +2,7 @@ import gymnasium as gym
 import numpy as np
 import pandas as pd
 from stable_baselines3 import PPO
-from envs.intraday_option_env_v2 import IntradayOptionEnv_V2 as IntradayOptionEnv 
+from envs.intraday_option_env import IntradayOptionEnv
 import config
 import os
 import datetime
@@ -12,11 +12,11 @@ def main():
     AGENT = 'PPO'
     DATA_PATH = 'data/test.csv'
     START_DATE = "2025-01-01"  # User can filter range
-    END_DATE = "2025-12-31"    # User can filter range
+    END_DATE = "2025-01-31"    # User can filter range
 
     # Optional: Set this to a specific timestamp (e.g., "20231027_103000") to load a specific old model.
     # If None, it automatically finds the latest one.
-    MODEL_ID = "20260129_200415"
+    MODEL_ID = "20260202_171223"
     # Set Random Seeds for Determinism
     SEED = 42
     import random
@@ -34,7 +34,7 @@ def main():
 
     print(f"Loading Environment....")
     # Testing Phase: 0% Forced Entry, 100% Agent Decided
-    env = IntradayOptionEnv(data_path=DATA_PATH, start_date=START_DATE, end_date=END_DATE, force_entry_prob=0.0)
+    env = IntradayOptionEnv(data_path=DATA_PATH, start_date=START_DATE, end_date=END_DATE)
 
     # --- Model Selection Logic ---
     BASE_MODEL_DIR = os.path.join('model', AGENT)
