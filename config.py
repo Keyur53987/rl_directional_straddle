@@ -25,7 +25,9 @@ ATR_MULTIPLIER = 1.5           # Multiplier for ATR-based gap
 EXPIRY_DAY_OF_WEEK = 1         # 0=Mon, 1=Tue, 2=Wed, 3=Thu, 4=Fri
 
 # RL Reward Settings
+REWARD_TYPE = "CUMULATIVE_ROI + DRAWDOWN_PENALTY + TRADE_PENALTY"
 REWARD_LAMBDA = 0.05            # Penalty weight for drawdown
+TRADE_PENALTY_LAMBDA = 0.01     # Penalty weight for trade count (reduces overtrading)
 FORCED_EXIT_PENALTY = 1000.0   # Penalty for not exiting manually before EOD
 
 # Environment Settings (1-minute data)

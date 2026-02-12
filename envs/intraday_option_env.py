@@ -60,6 +60,7 @@ class IntradayOptionEnv(gym.Env):
         
         self.pnl_curve = []
         self.realized_pnl = 0.0
+        self.total_trades = 0  # Track total lots traded (buys + sells)
         
         # Track day's OHLC for features
         self.day_open = 0.0
@@ -197,6 +198,7 @@ class IntradayOptionEnv(gym.Env):
         self.peak_pnl = 0.0
         self.max_drawdown = 0.0
         self.premium_deployed = 0.0 # Track peak capital usage
+        self.total_trades = 0  # Reset trade count
         self.trade_logs = [] # Track trade details
         
         return self._get_observation(), {}
@@ -298,6 +300,7 @@ class IntradayOptionEnv(gym.Env):
                 # Weighted Average Price
                 total_cost = (self.entry_price_ce * self.ce_lots) + (ce_price_curr * 1)
                 self.ce_lots += 1
+                self.total_trades += 1  # Track CE buy
                 self.entry_price_ce = total_cost / self.ce_lots
                 
                 # Update Available Cash immediately for next leg check
@@ -327,6 +330,7 @@ class IntradayOptionEnv(gym.Env):
                 
                 self.realized_pnl += pnl_per_lot
                 self.ce_lots -= 1
+                self.total_trades += 1  # Track CE sell
                 if self.ce_lots == 0: self.entry_price_ce = 0
                 
                 # Update Available Cash (released margin + pnl)
@@ -356,6 +360,7 @@ class IntradayOptionEnv(gym.Env):
             if self.pe_lots < config.MAX_LOTS and cost <= available_cash:
                 total_cost = (self.entry_price_pe * self.pe_lots) + (pe_price_curr * 1)
                 self.pe_lots += 1
+                self.total_trades += 1  # Track PE buy
                 self.entry_price_pe = total_cost / self.pe_lots
                 available_cash -= cost
                 self.realized_pnl -= transaction_cost
@@ -382,6 +387,7 @@ class IntradayOptionEnv(gym.Env):
 
                 self.realized_pnl += pnl_per_lot
                 self.pe_lots -= 1
+                self.total_trades += 1  # Track PE sell
                 if self.pe_lots == 0: self.entry_price_pe = 0
                 
                 proceeds = pe_price_curr * config.LOT_SIZE
@@ -459,6 +465,7 @@ class IntradayOptionEnv(gym.Env):
             penalty = 0.0
             if self.ce_lots > 0 or self.pe_lots > 0:
                 penalty = config.FORCED_EXIT_PENALTY
+                self.total_trades += self.ce_lots + self.pe_lots  # Count forced close lots
             
             # Close positions
             self.ce_lots = 0 
@@ -489,9 +496,11 @@ class IntradayOptionEnv(gym.Env):
         if current_drawdown > self.max_drawdown: 
             self.max_drawdown = current_drawdown
         
-        # New Reward Formula: Cumulative ROI - Drawdown Penalty
+        # Reward Formula: Cumulative ROI - Drawdown Penalty - Trade Penalty
         denom = max(self.premium_deployed, 1.0) # Avoid division by zero
-        reward = (self.total_pnl / denom) - config.REWARD_LAMBDA * (self.max_drawdown / denom)
+        episode_length = max(len(self.day_data), 1)  # Normalize trade count by episode length
+        reward = (self.total_pnl / denom) - config.REWARD_LAMBDA * (self.max_drawdown / denom) \
+                 - config.TRADE_PENALTY_LAMBDA * (self.total_trades / episode_length)
         
         # Apply Forced Exit Penalty only if explicitly needed, but user requested replacement.
         # If we include penalty, it should probably be subtracted. 
@@ -521,7 +530,8 @@ class IntradayOptionEnv(gym.Env):
             'premium_deployed': self.premium_deployed,
             'realized_pnl': self.realized_pnl,
             'roi': self.total_pnl / denom,
-            'max_drawdown_pct': self.max_drawdown / denom
+            'max_drawdown_pct': self.max_drawdown / denom,
+            'total_trades': self.total_trades
         }
         
         return self._get_observation(), reward, done, truncated, info
