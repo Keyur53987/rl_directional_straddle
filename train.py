@@ -84,6 +84,12 @@ def main():
     # MODE = 'add'  # 'add' or 'ratio'
     AGENT = 'PPO' # Agent Name
     
+    # Path to a saved model to retrain/continue training
+    # Set this to the absolute path of the model zip file, e.g., "model/PPO/20231027_120000/ppo_intraday_model.zip"
+    # If None, a new model is created.
+    RETRAIN_MODEL_PATH = None 
+
+    
     # Structure: model/PPO/{TIMESTAMP}/
     BASE_DIR = os.path.join('model', AGENT)
     SAVE_DIR = os.path.join(BASE_DIR, TIMESTAMP)
@@ -92,8 +98,8 @@ def main():
     SAVE_PATH = os.path.join(SAVE_DIR, f'{AGENT.lower()}_intraday_model')
     LOG_DIR = os.path.join(SAVE_DIR, 'logs')
     DATA_PATH = 'data/train.csv'
-    START_DATE = "2025-01-01"  # Training: 6 Years
-    END_DATE = "2025-01-31"    # Validation is 2021 (set below)
+    START_DATE = "2021-01-01"  # Training: 6 Years
+    END_DATE = "2022-12-31"    # Validation is 2021 (set below)
     NUM_ENVS = 4  # Number of parallel environments (adjust based on CPU cores)
 
     # Create directories
@@ -124,8 +130,8 @@ def main():
         # Create Validation Environment (Prevent Overfitting)
         # We use a separate time period (e.g., 2021) to evaluate the model
         # The 'best_model' will be saved based on performance in THIS environment, not the training one.
-        VAL_START_DATE = "2025-02-15"
-        VAL_END_DATE = "2025-02-28" # 1 year validation
+        VAL_START_DATE = "2023-01-01"
+        VAL_END_DATE = "2023-12-31" # 1 year validation
         
         print(f"Creating Validation Environment ({VAL_START_DATE} to {VAL_END_DATE})...")
         eval_env_kwargs = {
@@ -134,8 +140,15 @@ def main():
             'end_date': VAL_END_DATE
         }
         # Eval env doesn't need to be vectorized, but Monitor is crucial for EvalCallback to read stats
-        eval_env = IntradayOptionEnv(**eval_env_kwargs)
-        eval_env = Monitor(eval_env, os.path.join(SAVE_DIR, 'eval_monitor'))
+        # We use SubprocVecEnv to ensure strict type matching with the training env (VecEnv)
+        eval_env = make_vec_env(
+            IntradayOptionEnv,
+            n_envs=1,
+            seed=0,
+            vec_env_cls=SubprocVecEnv,
+            env_kwargs=eval_env_kwargs,
+            monitor_dir=os.path.join(SAVE_DIR, 'eval_monitor')
+        )
 
         from stable_baselines3.common.callbacks import EvalCallback, CheckpointCallback
 
@@ -143,7 +156,7 @@ def main():
         # eval_freq: Evaluate every 5000 steps (approx 13 trading days of 375 steps)
         # best_model_save_path: Where to save the model driven by validation performance
         eval_callback = EvalCallback(eval_env, best_model_save_path=SAVE_DIR,
-                                     log_path=LOG_DIR, eval_freq=5000,
+                                     log_path=LOGw_DIR, eval_freq=5000,
                                      deterministic=True, render=False)
         
         checkpoint_callback = CheckpointCallback(save_freq=10000, save_path=SAVE_DIR,
@@ -151,19 +164,24 @@ def main():
 
         print("Training PPO Agent...")
         # User-customized training parameters for 1-minute data
-        learning_rate = 0.0003
-        n_steps = 2048
-        batch_size = 512
+        learning_rate = 0.001
+        n_steps = 512
+        batch_size = 2048
         gamma = 0.99
-        total_timesteps = 1_00_000
+        total_timesteps = 2_000_000
         
-        model = PPO("MlpPolicy", env,seed=42, verbose=1, learning_rate=learning_rate, n_steps=n_steps, batch_size=batch_size, gamma=gamma, tensorboard_log=LOG_DIR, device='cuda')
+        if RETRAIN_MODEL_PATH and os.path.exists(RETRAIN_MODEL_PATH):
+            print(f"Loading existing model from: {RETRAIN_MODEL_PATH}")
+            model = PPO.load(RETRAIN_MODEL_PATH, env=env, tensorboard_log=LOG_DIR, device='cuda')
+        else:
+            print("Creating a NEW PPO Agent with defined parameters...")
+            model = PPO("MlpPolicy", env, seed=42, verbose=1, learning_rate=learning_rate, n_steps=n_steps, batch_size=batch_size, gamma=gamma, tensorboard_log=LOG_DIR, device='cuda')
+
         
-        # training with callbacks
         # training with callbacks
         model.learn(total_timesteps=total_timesteps, callback=[eval_callback, checkpoint_callback], progress_bar=True)
         print("Training Finished.")
-        
+
         # Save final model as well
         final_model_path = os.path.join(SAVE_DIR, f'{AGENT.lower()}_intraday_model_final')
         model.save(final_model_path)
@@ -185,6 +203,7 @@ def main():
             "environment_parameters": env_kwargs,
             "evaluation_environment_parameters": eval_env_kwargs,
             "model_parameters": {
+                "REWARD_TYPE": "CUMULATIVE_PNL",
                 "policy": "MlpPolicy",
                 "learning_rate": learning_rate,
                 "n_steps": n_steps,

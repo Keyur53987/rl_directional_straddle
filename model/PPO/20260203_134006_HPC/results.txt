@@ -1,0 +1,80 @@
+timestamp:
+"20260203_134006_HPC"
+
+Hyperparameter:
+{
+    "training_data_range": {
+        "path": "data/train.csv",
+        "start_date": "2020-01-01",
+        "end_date": "2022-12-31"
+    },
+    "validation_data_range": {
+        "start_date": "2023-01-01",
+        "end_date": "2023-12-31"
+    },
+    "model_parameters": {
+        "REWARD_TYPE": "CUMULATIVE_PNL",
+        "policy": "MlpPolicy",
+        "learning_rate": 0.01,
+        "n_steps": 512,
+        "batch_size": 2048,
+        "gamma": 0.99,
+        "ent_coef": 0.0,
+        "total_timesteps": 3000000
+    },
+    "config_parameters": {
+        "REWARD_TYPE": "CUMULATIVE_PNL",
+        "INITIAL_CAPITAL": 1000000.0,
+        "MAX_LOTS": 10,
+        "TRANSACTION_COST_PCT": 0.0005,
+        "SLIPPAGE_PCT": 0.0002,
+        "START_TIME": "09:30",
+        "END_TIME": "15:15",
+        "STRADDLE_STRIKE_GAP": 100,
+        "LOT_SIZE": 75,
+        "STRATEGY_TYPE": "LONG",
+        "STRIKE_SELECTION_METHOD": "ATM",
+        "BOLLINGER_STD": 2.0,
+        "ATR_MULTIPLIER": 1.5,
+        "EXPIRY_DAY_OF_WEEK": 1,
+        "REWARD_LAMBDA": 0.2,
+        "WINDOW_SIZE": 150,
+        "RISK_FREE_RATE": 0.06,
+        "IV_ESTIMATE": 0.15
+    },
+    "reward_lambda": 0.2
+}
+
+testing_data_range:
+{
+    "start_date": "2025-01-01",
+    "end_date": "2025-07-25",
+    "total_days": 142
+}
+
+overall_result_information:
+{
+    "total_pnl": -9118544.3,
+    "overall_roi_pct": -911.85,
+    "avg_daily_pnl": -64215.1,
+    "max_drawdown": 403990.22,
+    "win_rate_pct": 20.42,
+    "avg_trades_per_day": 49.8,
+    "total_trades": 7072.0,
+    "sharpe_ratio": -10.7587
+}
+
+training_mean_reward:
+-155.62019646666664
+
+training_stats:
+{
+    "mean_reward": -155.62019646666664,
+    "median_reward": -158.05193150000002,
+    "std_reward": 81.5105795903188,
+    "min_reward": -390.844207,
+    "max_reward": 30.420081,
+    "total_episodes": 150,
+    "mean_reward_last_100": -163.05770017999998
+}
+

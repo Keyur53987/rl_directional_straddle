@@ -1,0 +1,70 @@
+{
+    "timestamp": "20260205_122026_HPC",
+    "Hyperparameter": {
+        "training_data_range": {
+            "path": "data/train.csv",
+            "start_date": "2020-01-01",
+            "end_date": "2022-12-31"
+        },
+        "validation_data_range": {
+            "start_date": "2023-01-01",
+            "end_date": "2023-12-31"
+        },
+        "model_parameters": {
+            "REWARD_TYPE": "CUMULATIVE_PNL",
+            "RETRAIN_MODEL": "model/PPO/20260204_154842/best_model.zip",
+            "policy": "MlpPolicy",
+            "learning_rate": 0.0003,
+            "n_steps": 2048,
+            "batch_size": 64,
+            "gamma": 0.99,
+            "ent_coef": 0.01,
+            "total_timesteps": 3000000
+        },
+        "config_parameters": {
+            "INITIAL_CAPITAL": 1000000.0,
+            "MAX_LOTS": 10,
+            "TRANSACTION_COST_PCT": 0.0005,
+            "SLIPPAGE_PCT": 0.0002,
+            "START_TIME": "09:30",
+            "END_TIME": "15:15",
+            "STRADDLE_STRIKE_GAP": 100,
+            "LOT_SIZE": 75,
+            "STRATEGY_TYPE": "LONG",
+            "STRIKE_SELECTION_METHOD": "ATM",
+            "BOLLINGER_STD": 2.0,
+            "ATR_MULTIPLIER": 1.5,
+            "EXPIRY_DAY_OF_WEEK": 1,
+            "REWARD_LAMBDA": 0.001,
+            "WINDOW_SIZE": 150,
+            "RISK_FREE_RATE": 0.06,
+            "IV_ESTIMATE": 0.15
+        },
+        "reward_lambda": 0.001
+    },
+    "testing_data_range": {
+        "start_date": "2025-01-01",
+        "end_date": "2025-12-30",
+        "total_days": 248
+    },
+    "overall_result_information": {
+        "total_pnl": 5373070.85,
+        "overall_roi_pct": 537.31,
+        "avg_daily_pnl": 21665.61,
+        "max_drawdown": 152715.21,
+        "win_rate_pct": 53.63,
+        "avg_trades_per_day": 77.3,
+        "total_trades": 19182.0,
+        "sharpe_ratio": 6.2643
+    },
+    "training_mean_reward": -28.215066586666666,
+    "training_stats": {
+        "mean_reward": -28.215066586666666,
+        "median_reward": -41.243883,
+        "std_reward": 142.8228228375977,
+        "min_reward": -1063.470616,
+        "max_reward": 335.148759,
+        "total_episodes": 150,
+        "mean_reward_last_100": -24.009434690000003
+    }
+}

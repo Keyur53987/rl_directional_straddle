@@ -1,0 +1,53 @@
+{
+    "timestamp": "20260205_174314_HPC",
+    "agent": "PPO",
+    "training_data": {
+        "path": "data/train.csv",
+        "start_date": "2020-01-01",
+        "end_date": "2022-12-31"
+    },
+    "validation_data": {
+        "start_date": "2023-01-01",
+        "end_date": "2023-12-31"
+    },
+    "environment_parameters": {
+        "data_path": "data/train.csv",
+        "start_date": "2020-01-01",
+        "end_date": "2022-12-31"
+    },
+    "evaluation_environment_parameters": {
+        "data_path": "data/train.csv",
+        "start_date": "2023-01-01",
+        "end_date": "2023-12-31"
+    },
+    "model_parameters": {
+        "REWARD_TYPE": "CUMULATIVE_PNL",
+        "RETRAIN_MODEL": "model/PPO/20260204_154842/best_model.zip",
+        "policy": "MlpPolicy",
+        "learning_rate": 0.005,
+        "n_steps": 2048,
+        "batch_size": 64,
+        "gamma": 0.99,
+        "ent_coef": 0.05,
+        "total_timesteps": 3000000
+    },
+    "config_parameters": {
+        "INITIAL_CAPITAL": 1000000.0,
+        "MAX_LOTS": 10,
+        "TRANSACTION_COST_PCT": 0.008,
+        "SLIPPAGE_PCT": 0.005,
+        "START_TIME": "09:30",
+        "END_TIME": "15:15",
+        "STRADDLE_STRIKE_GAP": 100,
+        "LOT_SIZE": 75,
+        "STRATEGY_TYPE": "LONG",
+        "STRIKE_SELECTION_METHOD": "ATM",
+        "BOLLINGER_STD": 2.0,
+        "ATR_MULTIPLIER": 1.5,
+        "EXPIRY_DAY_OF_WEEK": 1,
+        "REWARD_LAMBDA": 0.05,
+        "WINDOW_SIZE": 150,
+        "RISK_FREE_RATE": 0.06,
+        "IV_ESTIMATE": 0.15
+    }
+}

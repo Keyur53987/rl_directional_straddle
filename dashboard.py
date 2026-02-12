@@ -11,26 +11,22 @@ import datetime
 # Page Params
 st.set_page_config(page_title="RL Trading Simulation", layout="wide")
 
-# --- 1. Load Resources ---
-@st.cache_resource
-def load_resources():
-    # Model
-    model_name = "20260121_125741"
-    model_path = os.path.join('model', 'PPO', model_name, 'best_model')
-    try:
-        model = PPO.load(model_path)
-    except Exception as e:
-        model = None
-        st.error(f"Error loading model: {e}")
-        
-    return model
 
-model = load_resources()
-
-import time
-
-# --- 2. Sidebar Controls ---
+# ---  Sidebar Controls ---
 st.sidebar.title("Configuration")
+
+# Model Selection
+model_dir = os.path.join('model', 'PPO')
+if os.path.exists(model_dir):
+    available_models = sorted([d for d in os.listdir(model_dir) if os.path.isdir(os.path.join(model_dir, d))], reverse=True)
+else:
+    available_models = []
+
+if available_models:
+    selected_model_name = st.sidebar.selectbox("Select Model", available_models, index=0)
+else:
+    st.sidebar.error("No models found in model/PPO/")
+    selected_model_name = None
 
 # Data File
 data_path = st.sidebar.text_input("Data Path", "data/test.csv")
@@ -39,6 +35,37 @@ config.STRATEGY_TYPE = strategy_type
 
 # Simulation Speed
 sim_speed = st.sidebar.slider("Simulation Speed (seconds per step)", 0.01, 2.0, 0.1)
+
+# --- Load Resources ---
+@st.cache_resource
+def load_resources(model_name):
+    if not model_name:
+        return None
+        
+    model_path_best = os.path.join('model', 'PPO', model_name, 'best_model')
+    model_path_final = os.path.join('model', 'PPO', model_name, 'ppo_intraday_model_final')
+    model_path_old = os.path.join('model', 'PPO', model_name, 'ppo_intraday_model') # Backward compatibility
+    
+    model_path = None
+    if os.path.exists(model_path_best + ".zip"):
+         model_path = model_path_best
+    elif os.path.exists(model_path_final + ".zip"):
+         model_path = model_path_final
+    elif os.path.exists(model_path_old + ".zip"):
+         model_path = model_path_old
+         
+    if not model_path:
+        st.error(f"Model file not found in {model_name}")
+        return None
+
+    try:
+        model = PPO.load(model_path)
+        return model
+    except Exception as e:
+        st.error(f"Error loading model: {e}")
+        return None
+
+model = load_resources(selected_model_name)
 
 # Load Data Dates
 try:

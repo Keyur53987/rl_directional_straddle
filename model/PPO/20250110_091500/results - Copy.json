@@ -1,0 +1,34 @@
+{
+    "timestamp": "20250110_091500",
+    "Hyperparameter": {
+        "training_data_range": null,
+        "validation_data_range": null,
+        "model_parameters": null,
+        "reward_lambda": null
+    },
+    "testing_data_range": {
+        "start_date": "2025-01-01",
+        "end_date": "2025-07-25",
+        "total_days": 142
+    },
+    "overall_result_information": {
+        "total_pnl": -10874.53,
+        "overall_roi_pct": -1.09,
+        "avg_daily_pnl": -76.58,
+        "max_drawdown": 9020.59,
+        "win_rate_pct": 33.8,
+        "avg_trades_per_day": 2.1,
+        "total_trades": 304.0,
+        "sharpe_ratio": -0.8475
+    },
+    "training_mean_reward": -578.5827958190574,
+    "training_stats": {
+        "mean_reward": -578.5827958190574,
+        "median_reward": -262.541028,
+        "std_reward": 916.1909877989109,
+        "min_reward": -13089.227524,
+        "max_reward": 1.377891,
+        "total_episodes": 2907,
+        "mean_reward_last_100": -70.08055184999999
+    }
+}

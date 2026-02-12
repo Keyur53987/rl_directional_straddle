@@ -10,13 +10,13 @@ import datetime
 def main():
     # Configuration
     AGENT = 'PPO'
-    DATA_PATH = 'data/test.csv'
+    DATA_PATH = 'data/NIFTY50_2025.csv'
     START_DATE = "2025-01-01"  # User can filter range
-    END_DATE = "2025-01-31"    # User can filter range
+    END_DATE = "2025-12-31"    # User can filter range
 
     # Optional: Set this to a specific timestamp (e.g., "20231027_103000") to load a specific old model.
     # If None, it automatically finds the latest one.
-    MODEL_ID = "20260202_171223"
+    MODEL_ID = "20260203_203412"
     # Set Random Seeds for Determinism
     SEED = 42
     import random
@@ -25,7 +25,7 @@ def main():
     random.seed(SEED)
     np.random.seed(SEED)
     torch.manual_seed(SEED)
-    if torch.cuda.is_available():
+    if torch.cuda.is_available(): 
         torch.cuda.manual_seed_all(SEED)
     
     # Ensure deterministic behavior in PyTorch (optional, slightly slower)

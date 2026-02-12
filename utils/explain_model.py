@@ -33,18 +33,15 @@ def get_feature_names():
 def main():
     # --- Configuration ---
     AGENT = 'PPO'
-    DATA_PATH = 'data/test.csv'
-    N_SAMPLES = 2000 # Number of observations to collect
+    DATA_PATH = 'data/NIFTY50_2025.csv'
+    N_SAMPLES = 7590 # Number of observations to collect
     
     # Auto-detect latest model
+    MODEL_ID = '20260205_122026_HPC'
     BASE_MODEL_DIR = os.path.join('model', AGENT)
     if not os.path.exists(BASE_MODEL_DIR):
         print("No models found.")
         return
-        
-    subdirs = [d for d in os.listdir(BASE_MODEL_DIR) if os.path.isdir(os.path.join(BASE_MODEL_DIR, d))]
-    subdirs.sort()
-    MODEL_ID = subdirs[-1]
     MODEL_DIR = os.path.join(BASE_MODEL_DIR, MODEL_ID)
     
     # Load Model
@@ -56,7 +53,7 @@ def main():
     model = PPO.load(model_path)
     
     # Create Env
-    env = IntradayOptionEnv(data_path=DATA_PATH, force_entry_prob=0.0)
+    env = IntradayOptionEnv(data_path=DATA_PATH)
     
     print(f"Collecting {N_SAMPLES} observations from environment...")
     obs, _ = env.reset()
@@ -108,7 +105,7 @@ def main():
     print(df_imp.head(10))
     
     plt.figure(figsize=(12, 8))
-    sns.barplot(x='Importance', y='Feature', data=df_imp.head(20), palette='viridis')
+    sns.barplot(x='Importance', y='Feature', data=df_imp.head(20), hue='Importance', palette='viridis', legend=False)
     plt.title(f'Feature Importance (Permutation on Value Function) - {MODEL_ID}')
     plt.xlabel('Mean Absolute Error Impact')
     plt.tight_layout()

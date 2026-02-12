@@ -66,14 +66,14 @@ class IntradayOptionEnv(gym.Env):
         self.day_high = 0.0
         self.day_low = float('inf')
         
-    def _get_current_volatility(self):
+    def _get_current_volatility(self,vol_risk_premium=1.20):
         """
         Get current realized volatility to use as IV proxy.
         Falls back to config.IV_ESTIMATE if realized vol is not available.
         """
         # We need historical data to calculate volatility
         hist_data = self.day_data.iloc[:self.current_step+1]
-        
+          
         if len(hist_data) < 5:
              return config.IV_ESTIMATE
              
@@ -98,9 +98,9 @@ class IntradayOptionEnv(gym.Env):
              vol = vol_features.get('rolling_vol_5min', 0.0)
              
         if vol < 1e-4:
-             return config.IV_ESTIMATE
+            pass
              
-        return vol
+        return vol_risk_premium * vol
         
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)

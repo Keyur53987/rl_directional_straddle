@@ -21,11 +21,13 @@
         "end_date": "2025-02-28"
     },
     "model_parameters": {
+        "REWARD_TYPE": "CUMULATIVE_PNL",
         "policy": "MlpPolicy",
         "learning_rate": 0.0003,
         "n_steps": 2048,
         "batch_size": 512,
         "gamma": 0.99,
+        "ent_coef": 0.0,
         "total_timesteps": 100000
     },
     "config_parameters": {
