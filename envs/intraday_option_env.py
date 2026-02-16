@@ -61,6 +61,7 @@ class IntradayOptionEnv(gym.Env):
         self.pnl_curve = []
         self.realized_pnl = 0.0
         self.total_trades = 0  # Track total lots traded (buys + sells)
+        self.total_turnover = 0.0  # Track turnover (abs_profit + abs_loss)
         
         # Track day's OHLC for features
         self.day_open = 0.0
@@ -199,6 +200,7 @@ class IntradayOptionEnv(gym.Env):
         self.max_drawdown = 0.0
         self.premium_deployed = 0.0 # Track peak capital usage
         self.total_trades = 0  # Reset trade count
+        self.total_turnover = 0.0  # Reset turnover
         self.trade_logs = [] # Track trade details
         
         return self._get_observation(), {}
@@ -329,6 +331,7 @@ class IntradayOptionEnv(gym.Env):
                 pnl_per_lot -= transaction_cost
                 
                 self.realized_pnl += pnl_per_lot
+                self.total_turnover += abs(pnl_per_lot)  # Track CE turnover
                 self.ce_lots -= 1
                 self.total_trades += 1  # Track CE sell
                 if self.ce_lots == 0: self.entry_price_ce = 0
@@ -386,6 +389,7 @@ class IntradayOptionEnv(gym.Env):
                 pnl_per_lot -= transaction_cost
 
                 self.realized_pnl += pnl_per_lot
+                self.total_turnover += abs(pnl_per_lot)  # Track PE turnover
                 self.pe_lots -= 1
                 self.total_trades += 1  # Track PE sell
                 if self.pe_lots == 0: self.entry_price_pe = 0
@@ -459,13 +463,14 @@ class IntradayOptionEnv(gym.Env):
             pnl_pe -= cost_pe
                 
             self.realized_pnl += (pnl_ce + pnl_pe)
+            self.total_turnover += abs(pnl_ce) + abs(pnl_pe)  # Track forced close turnover
             
             # Forced Exit Penalty
             # If we had open positions that were auto-closed, we penalize the agent.
-            penalty = 0.0
+            forced_close_lots = 0
             if self.ce_lots > 0 or self.pe_lots > 0:
-                penalty = config.FORCED_EXIT_PENALTY
-                self.total_trades += self.ce_lots + self.pe_lots  # Count forced close lots
+                forced_close_lots = self.ce_lots + self.pe_lots
+                self.total_trades += forced_close_lots  # Count forced close lots
             
             # Close positions
             self.ce_lots = 0 
@@ -474,7 +479,7 @@ class IntradayOptionEnv(gym.Env):
             # Leaving as is for now to avoid complexity in End Logic.
             
         else:
-            penalty = 0.0 # No penalty if not forced exit
+            forced_close_lots = 0 # No forced close
             
         # --- CALCULATE REWARD ---
         # Unrealized PnL
@@ -484,9 +489,13 @@ class IntradayOptionEnv(gym.Env):
         if config.STRATEGY_TYPE == 'SHORT':
              unrealized_ce = (self.entry_price_ce - ce_price) * self.ce_lots * config.LOT_SIZE
              unrealized_pe = (self.entry_price_pe - pe_price) * self.pe_lots * config.LOT_SIZE
-             
+        
+        prev_total_pnl = self.total_pnl  # Save previous PnL for step_pnl
         self.total_pnl = self.realized_pnl + unrealized_ce + unrealized_pe
         self.pnl_curve.append(self.total_pnl)
+        
+        # Step PnL: change in total PnL from last step
+        step_pnl = self.total_pnl - prev_total_pnl
         
         # Track Peak PnL and Max Drawdown
         if self.total_pnl > self.peak_pnl: 
@@ -496,42 +505,28 @@ class IntradayOptionEnv(gym.Env):
         if current_drawdown > self.max_drawdown: 
             self.max_drawdown = current_drawdown
         
-        # Reward Formula: Cumulative ROI - Drawdown Penalty - Trade Penalty
+        # Reward Formula: λ_pnl * ROI + λ_step * StepPnL - λ_dd * Drawdown - λ_trade * Trades - λ_to * Turnover - λ_exit * ForcedLots
         denom = max(self.premium_deployed, 1.0) # Avoid division by zero
         episode_length = max(len(self.day_data), 1)  # Normalize trade count by episode length
-        reward = (self.total_pnl / denom) - config.REWARD_LAMBDA * (self.max_drawdown / denom) \
-                 - config.TRADE_PENALTY_LAMBDA * (self.total_trades / episode_length)
+        reward = config.PNL_LAMBDA * (self.total_pnl / denom) \
+                 + config.STEP_PNL_LAMBDA * (step_pnl / denom) \
+                 - config.DRAWDOWN_LAMBDA * (self.max_drawdown / denom) \
+                 - config.TRADE_PENALTY_LAMBDA * (self.total_trades / episode_length) \
+                 - config.TURNOVER_LAMBDA * (self.total_turnover / denom)
         
-        # Apply Forced Exit Penalty only if explicitly needed, but user requested replacement.
-        # If we include penalty, it should probably be subtracted. 
-        # For now, sticking to the requested formula exactly.
-        # If penalty was non-zero (forced exit happened), we might want to include it?
-        # The user's prompt said: "Replace the current reward calculation with this logic"
-        # and provided the specific formula. I will assume the formula is complete.
-        # However, to avoid "cheating" the forced exit by just taking the ROI hit (which might be small),
-        # we might want to keep the penalty. 
-        # But let's trust the user's explicit formula first. 
-        # If the user wants the penalty, they would likely include it or it would be part of PnL.
-        # (Forced Exit Penalty is currently a scalar ~ -100, which is huge compared to ROI).
-        # I will subtract it if it exists, to be safe, or else the agent ignores time limit.
-        if penalty > 0:
-             reward -= (penalty / 100.0) # Scale penalty to be comparable to ROI? 
-             # Or just subtract it raw? ROI is usually < 1.0 (e.g. 0.05 for 5%).
-             # Penalty of 100 would be -100. That's massive.
-             # Let's assume the user knows what they are doing and omit it for now, 
-             # OR assume 'step_pnl' logic is gone so penalty logic needs to fit in.
-             # I will subtract penalty * 0.01 to make it significant but not infinite.
-             pass 
-        
-        # Actually, let's just use the user provided formula exactly.
+        # Apply Forced Exit Penalty — scales with remaining lots at close
+        if forced_close_lots > 0:
+            reward -= config.FORCED_EXIT_LAMBDA * (forced_close_lots / (2 * config.MAX_LOTS))
         
         # Info
         info = {
             'premium_deployed': self.premium_deployed,
             'realized_pnl': self.realized_pnl,
             'roi': self.total_pnl / denom,
+            'step_pnl': step_pnl,
             'max_drawdown_pct': self.max_drawdown / denom,
-            'total_trades': self.total_trades
+            'total_trades': self.total_trades,
+            'turnover': self.total_turnover
         }
         
         return self._get_observation(), reward, done, truncated, info

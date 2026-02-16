@@ -54,8 +54,8 @@ def generate_eval_data(model_path):
         "training_data_range": metadata_data.get("training_data"),
         "validation_data_range": metadata_data.get("validation_data"),
         "model_parameters": metadata_data.get("model_parameters"),
-        "config_parameters": metadata_data.get("config_parameters", {}),
-        "reward_lambda": metadata_data.get("config_parameters", {}).get("REWARD_LAMBDA")
+        "reward_settings": metadata_data.get("reward_settings", {}),
+        "config_parameters": metadata_data.get("config_parameters", {})
     }
     
     try:

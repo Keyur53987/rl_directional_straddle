@@ -203,13 +203,20 @@ def main():
             "environment_parameters": env_kwargs,
             "evaluation_environment_parameters": eval_env_kwargs,
             "model_parameters": {
-                "REWARD_TYPE": "CUMULATIVE_PNL",
                 "policy": "MlpPolicy",
                 "learning_rate": learning_rate,
                 "n_steps": n_steps,
                 "batch_size": batch_size,
                 "gamma": gamma,
                 "total_timesteps": total_timesteps
+            },
+            "reward_settings": {
+                "PNL_LAMBDA": config.PNL_LAMBDA,
+                "STEP_PNL_LAMBDA": config.STEP_PNL_LAMBDA,
+                "DRAWDOWN_LAMBDA": config.DRAWDOWN_LAMBDA,
+                "TRADE_PENALTY_LAMBDA": config.TRADE_PENALTY_LAMBDA,
+                "TURNOVER_LAMBDA": config.TURNOVER_LAMBDA,
+                "FORCED_EXIT_LAMBDA": config.FORCED_EXIT_LAMBDA
             },
             "config_parameters": {
                 "INITIAL_CAPITAL": config.INITIAL_CAPITAL,
@@ -225,7 +232,6 @@ def main():
                 "BOLLINGER_STD": config.BOLLINGER_STD,
                 "ATR_MULTIPLIER": config.ATR_MULTIPLIER,
                 "EXPIRY_DAY_OF_WEEK": config.EXPIRY_DAY_OF_WEEK,
-                "REWARD_LAMBDA": config.REWARD_LAMBDA,
                 "WINDOW_SIZE": config.WINDOW_SIZE,
                 "RISK_FREE_RATE": config.RISK_FREE_RATE,
                 "IV_ESTIMATE": config.IV_ESTIMATE
