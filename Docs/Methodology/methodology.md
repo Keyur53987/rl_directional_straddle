@@ -5,11 +5,15 @@
 We model the intraday directional straddle trading problem as a discrete-time Markov Decision Process (MDP) [1], formalized as a tuple $(S, A, P, R, \gamma)$. This framework is widely adopted in financial reinforcement learning literature to solve optimal execution and hedging problems under market friction [2, 3]. Unlike traditional delta-hedging strategies that rely on rigid assumptions (e.g., continuous trading, zero transaction costs), the MDP allows the agent to learn an adaptive policy $\pi_\theta(a_t|s_t)$, parameterized by a neural network $\theta$, that maximizes risk-adjusted returns in the presence of realistic market constraints.
 
 ### 1.1 State Space ($S$)
-At each time step $t$ (representing 1 minute), the agent observes a state vector $s_t \in \mathbb{R}^{55}$. To ensure the agent captures both market regime and option pricing dynamics, we construct a feature set combining deep learning inputs with financial theory:
+At each time step $t$ (representing 1 minute), the agent observes a state vector $s_t \in \mathbb{R}^{55}$. To ensure the agent captures both market regime and option pricing dynamics, we construct a feature set combining deep learning inputs with financial theory, consisting of 7 distinct feature groups:
 
-1.  **Market Mico-structure and Volatility**: We compute realized volatility estimators including Parkinson and Garman-Klass volatility [4] over multiple rolling windows (5, 15, 30, 60 minutes). These features allow the agent to adapt to changing volatility regimes, a critical factor for option pricing.
-2.  **Theoretical Option Sensitivities (Greeks)**: While model-free RL does not require a pricing model, we augment the state space with theoretical Greeks ($\Delta, \Gamma, \nu, \Theta$, Vanna, Volga) calculated using the Black-Scholes-Merton model [5]. This "guided" RL approach provides the agent with structured information about the portfolio's sensitivity to underlying price changes, accelerating convergence compared to learning these dynamics from raw price data alone [6].
-3.  **Portfolio State**: The state includes current inventory (number of lots needed), entry prices, and current unrealized PnL. This makes the problem non-Markovian with respect to price alone, but Markovian with respect to the augmented state $(Price, Inventory)$.
+1. **Volatility Features (12 features)**: Realized volatility estimators including Parkinson and Garman-Klass volatility over multiple rolling windows (5, 15, 30, 60 minutes) to adapt to changing volatility regimes.
+2. **Price & Returns (10 features)**: Normalized close prices, distances from VWAP, and returns across multiple timeframes.
+3. **Option Greeks (10 features)**: Theoretical sensitivities ($\Delta, \Gamma, \nu, \Theta$, Vanna, Volga) calculated using the Black-Scholes-Merton model to provide structured information about portfolio sensitivity.
+4. **Technical Indicators (6 features)**: Momentum indicators such as RSI, MACD, and Bollinger Bands.
+5. **Position Features (10 features)**: Current inventory (lots), entry prices, and strike distances to ensure the state is Markovian inclusive of inventory.
+6. **Time Features (4 features)**: Time to expiry and intraday time progress.
+7. **Risk Metrics (3 features)**: Peak PnL drop, max drawdown, and rolling Sharpe ratio.
 
 ### 1.2 Action Space ($A$)
 To handle the complexities of intraday liquidity and execution, we discretize the action space $A = \{0, 1, 2\}$, simplifying the continuous hedging decisions typically found in theoretical literature [2]:
@@ -18,11 +22,12 @@ To handle the complexities of intraday liquidity and execution, we discretize th
 *   $a_t=2$ (**Bearish Adjustment**): Decreases portfolio Delta by entering/adding Put positions or exiting Call positions.
 
 ### 1.3 Reward Function ($R$)
-Designing an appropriate reward function is crucial for preventing the agent from taking excessive risks. We employ a risk-sensitive reward function inspired by the Deep Hedging framework [2] and Sharpe Ratio maximization [7]. The reward $r_t$ is defined as:
+Designing an appropriate reward function is crucial for preventing the agent from taking excessive risks. We employ a risk-sensitive reward function inspired by the Deep Hedging framework [2] and Sharpe Ratio maximization [7]. The peak performing runs (e.g., HPC configuration) utilize a multiplicative reward to heavily penalize deep drawdowns. The reward $r_t$ is defined essentially as:
 
-$$r_t = \underbrace{(\text{PnL}_t - \text{PnL}_{t-1})}_{\text{Step Return}} - \lambda \cdot \underbrace{\max(0, \text{Peak}_t - \text{PnL}_t)}_{\text{Drawdown Penalty}} - \underbrace{C(a_t)}_{\text{Transaction Costs}}$$
+$$r_t = \left(\frac{\text{Total PnL}_t}{\text{Denom}_t}\right) \times \left(1 - 0.001 \cdot \left(\frac{\text{Max Drawdown}_t}{\text{Denom}_t}\right)\right)$$
+*(Implemented as: `reward = (total_pnl/denom) * (0.001 * (max_drawdown/denom))`)*
 
-Where $\lambda$ represents the coefficient of risk aversion, penalizing deep drawdowns explicitly. $C(a_t)$ explicitly accounts for transaction costs and slippage, forcing the agent to trade only when the expected marginal gain of an adjustment exceeds the cost of execution [3].
+Where $0.001$ represents the coefficient of risk aversion (`REWARD_LAMBDA`), dynamically punishing volatility to force the agent to trade only when the expected marginal gain of an adjustment exceeds the cost of risk and execution. Transaction and turnover costs are additionally subtracted in the environment stepping calculation to account for friction [3].
 
 ## 2. Optimization Algorithm: Proximal Policy Optimization (PPO)
 

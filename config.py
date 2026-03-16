@@ -5,8 +5,8 @@
 
 INITIAL_CAPITAL = 1000000.0
 MAX_LOTS = 10
-TRANSACTION_COST_PCT = 0.0005  # 0.05% per trade
-SLIPPAGE_PCT = 0.0002          # 0.02% slippage
+TRANSACTION_COST_PCT = 0.05  # 0.05% per trade
+SLIPPAGE_PCT = 0.02          # 0.02% slippage
 
 # Strategy Settings
 # Strategy Settings
@@ -25,11 +25,11 @@ ATR_MULTIPLIER = 1.5           # Multiplier for ATR-based gap
 EXPIRY_DAY_OF_WEEK = 1         # 0=Mon, 1=Tue, 2=Wed, 3=Thu, 4=Fri
 
 # RL Reward Settings
-PNL_LAMBDA = 1.0                # Weight for cumulative PnL (ROI)
-STEP_PNL_LAMBDA = 0.5           # Weight for step-wise PnL change (immediate feedback)
-DRAWDOWN_LAMBDA = 0.05          # Penalty weight for max drawdown
-TRADE_PENALTY_LAMBDA = 0.01     # Penalty weight for trade count (reduces overtrading)
-TURNOVER_LAMBDA = 0.001         # Penalty weight for turnover (abs_profit + abs_loss)
+PNL_LAMBDA = 1.5                # Weight for cumulative PnL (ROI)
+STEP_PNL_LAMBDA = 0.15           # Weight for step-wise PnL change (immediate feedback)
+DRAWDOWN_LAMBDA = 0.4          # Penalty weight for max drawdown
+TRADE_PENALTY_LAMBDA = 0.2     # Penalty weight for trade count (reduces overtrading)
+TURNOVER_LAMBDA = 0.05         # Penalty weight for turnover (abs_profit + abs_loss)
 FORCED_EXIT_LAMBDA = 0.5       # Penalty weight for forced EOD close (scales with remaining lots)
 
 # Environment Settings (1-minute data)

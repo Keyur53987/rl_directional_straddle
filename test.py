@@ -10,9 +10,9 @@ import datetime
 def main():
     # Configuration
     AGENT = 'PPO'
-    DATA_PATH = 'data/NIFTY50_2025.csv'
-    START_DATE = "2025-01-01"  # User can filter range
-    END_DATE = "2025-12-31"    # User can filter range
+    DATA_PATH = 'data/test.csv'
+    START_DATE = "2020-01-01"  # User can filter range
+    END_DATE = "2020-12-31"    # User can filter range
 
     # Optional: Set this to a specific timestamp (e.g., "20231027_103000") to load a specific old model.
     # If None, it automatically finds the latest one.
@@ -59,7 +59,7 @@ def main():
 
     # Define Paths based on Model ID
     MODEL_DIR = os.path.join(BASE_MODEL_DIR, MODEL_ID)
-    RESULTS_DIR = os.path.join(MODEL_DIR, 'results')
+    RESULTS_DIR = os.path.join(MODEL_DIR, 'results_2020')
     os.makedirs(RESULTS_DIR, exist_ok=True)
     
     # Check if model exists

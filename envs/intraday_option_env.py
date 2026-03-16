@@ -74,7 +74,7 @@ class IntradayOptionEnv(gym.Env):
         Falls back to config.IV_ESTIMATE if realized vol is not available.
         """
         # We need historical data to calculate volatility
-        hist_data = self.day_data.iloc[:self.current_step+1]
+        hist_data = self.day_data.iloc[:self.current_step]
           
         if len(hist_data) < 5:
              return config.IV_ESTIMATE
@@ -136,7 +136,7 @@ class IntradayOptionEnv(gym.Env):
         if config.STRIKE_SELECTION_METHOD == 'BOLLINGER':
             # Get raw indicators from cached data if possible, or recalculate
             # We need history for indicators.
-            hist_data = self.day_data.iloc[:self.current_step+1]
+            hist_data = self.day_data.iloc[:self.current_step]
             closes = hist_data['close'].values
             highs = hist_data['high'].values
             lows = hist_data['low'].values
@@ -157,7 +157,7 @@ class IntradayOptionEnv(gym.Env):
             if self.pe_strike > current_price: self.pe_strike = round(current_price / config.STRADDLE_STRIKE_GAP) * config.STRADDLE_STRIKE_GAP
             
         elif config.STRIKE_SELECTION_METHOD == 'ATR':
-            hist_data = self.day_data.iloc[:self.current_step+1]
+            hist_data = self.day_data.iloc[:self.current_step]
             closes = hist_data['close'].values
             highs = hist_data['high'].values
             lows = hist_data['low'].values
@@ -601,7 +601,7 @@ class IntradayOptionEnv(gym.Env):
         idx = 0
         
         # Get historical data up to current step
-        hist_data = self.day_data.iloc[:self.current_step+1]
+        hist_data = self.day_data.iloc[:self.current_step]
         
         if len(hist_data) == 0:
             return obs

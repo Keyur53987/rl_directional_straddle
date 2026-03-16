@@ -156,7 +156,7 @@ def main():
         # eval_freq: Evaluate every 5000 steps (approx 13 trading days of 375 steps)
         # best_model_save_path: Where to save the model driven by validation performance
         eval_callback = EvalCallback(eval_env, best_model_save_path=SAVE_DIR,
-                                     log_path=LOGw_DIR, eval_freq=5000,
+                                     log_path=LOG_DIR, eval_freq=5000,
                                      deterministic=True, render=False)
         
         checkpoint_callback = CheckpointCallback(save_freq=10000, save_path=SAVE_DIR,
@@ -208,6 +208,7 @@ def main():
                 "n_steps": n_steps,
                 "batch_size": batch_size,
                 "gamma": gamma,
+                "ent_coef": ent_coef,
                 "total_timesteps": total_timesteps
             },
             "reward_settings": {

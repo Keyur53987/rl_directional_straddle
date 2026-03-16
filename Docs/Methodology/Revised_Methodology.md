@@ -27,12 +27,14 @@ This "Training Wheels" mechanism bridges the gap between passive safety and acti
 We formulate the trading problem as a discrete-time Markov Decision Process $(S, A, R, P, \gamma)$.
 
 ### 3.1. State Space ($S$)
-The observation space is a 55-dimensional continuous vector representing the market state and internal portfolio status. It is composed of five feature groups:
-1.  **Market Data**: Normalized returns, log-returns, and relative volume of the underlying asset.
-2.  ** volatility Estimators**: Realized volatility (RV) over multiple windows (short-term vs. long-term) and ATR (Average True Range) to capture regime changes.
-3.  **Technical Indicators**: RSI (Relative Strength Index), MACD, and Bollinger Band distances to provide trend and mean-reversion signals.
-4.  **Option Greeks**: Delta, Gamma, Theta, and Vega of the current ATM strikes. Providing Greeks allows the agent to "see" the risk sensitivity of the market directly.
-5.  **Portfolio State**: Current inventory (Call Lots, Put Lots), unrealized PnL, margin utilization, and time-to-expiry scaling factors.
+The observation space is a 55-dimensional continuous vector representing the market state and internal portfolio status. It is composed of seven feature groups:
+1. **Volatility Features (12 features)**: Realized volatility (RV) over multiple windows (short-term vs. long-term) and Parkinson/Garman-Klass variations to capture regime changes.
+2. **Price & Returns (10 features)**: Normalized close prices and returns across multiple timeframes.
+3. **Option Greeks (10 features)**: Extracted and normalized Delta, Gamma, Theta, Vega, Vanna, and Volga using a hybridized Black-Scholes-Merton model to directly show the risk sensitivity of the market.
+4. **Technical Indicators (6 features)**: RSI, MACD, and Bollinger Band metrics to provide trend and mean-reversion signals.
+5. **Position Features (10 features)**: Current inventory (Call Lots, Put Lots), margin utilization, and relative strike distances.
+6. **Time Features (4 features)**: Intraday time progress and annualized time-to-expiry scaling factors.
+7. **Risk Metrics (3 features)**: Peak PnL distance, maximum drawdown relative to capital, and rolling performance estimators.
 
 ### 3.2. Action Space ($A$)
 To support complex structural hedging, we define the action space as a `MultiDiscrete([3, 3])` vector, allowing independent control over the Call and Put legs simultaneously.
@@ -56,12 +58,16 @@ A raw RL agent might attempt reckless actions, such as selling naked options (un
 3.  **Liquidity & Margin Checks**: Actions are validated against available cash and maximum lot limits ($\text{MaxLots}=10$).
 
 ### 3.4. Reward Function ($R$)
-The objective is not merely profit, but risk-adjusted stability. We employ a customized reward function:
-$$ R_t = \Delta \text{PnL}_t - \lambda \times \max(0, \text{Drawdown}_t) $$
-*   $\Delta \text{PnL}_t$: The change in Net Asset Value (NAV) from step $t-1$ to $t$.
-*   $\lambda$: A risk aversion penalty coefficient ($\lambda=0.5$).
-*   $\text{Drawdown}_t$: The current drawdown from the peak equity curve.
-This incentivizes the agent to smooth its equity curve and punish volatility, aligning the agent's behavior with the goals of a professional fund manager.
+The objective is not merely profit, but risk-adjusted stability. We employ a customized reward function that includes transaction cost and drawdown penalties. For the best-performing models (e.g., the HPC configuration), the reward formulation mathematically emphasizes volatility punishment using a multiplicative mechanism:
+
+$$ R_t = \left(\frac{\text{Total PnL}_t}{\text{Denom}_t}\right) \times \left(1 - 0.001 \cdot \left(\frac{\text{Max Drawdown}_t}{\text{Denom}_t}\right)\right) $$
+*(Implemented explicitly as: `reward = (total_pnl/denom) * (0.001 * (max_drawdown/denom))`)*
+
+*   $\text{Total PnL}_t$: The total realized and unrealized profit.
+*   $\text{Denom}_t$: Normalization factor based on deployed premium margin.
+*   $0.001$: The risk aversion penalty coefficient specifically calibrated to cap losses (`REWARD_LAMBDA`).
+*   $\text{Max Drawdown}_t$: The peak-to-trough drop from the peak equity curve.
+This formulation aggressively incentivizes the agent to smooth its equity curve and punish volatility, aligning the agent's behavior with the goals of a professional quantitative fund manager. Additional subtractions are made during the environment step for turnover, trade frequency, and forced daily exits.
 
 ## 4. Training Methodology
 
