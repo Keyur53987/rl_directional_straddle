@@ -100,12 +100,17 @@ class FeatureCalculator:
         # 1. Rolling realized volatility (multiple windows)
         annualization_factor = np.sqrt(252 * 390)
         
-        for window in [5, 15, 30, 60]:
+        windows = {
+            '5min': 5, '15min': 15, '30min': 30, '60min': 60,
+            '1day': 390, '7day': 2730, '15day': 5850
+        }
+        
+        for name, window in windows.items():
             if len(returns) >= window:
                 vol = np.std(returns[-window:]) * annualization_factor
-                features[f'rolling_vol_{window}min'] = vol
+                features[f'rolling_vol_{name}'] = vol
             else:
-                features[f'rolling_vol_{window}min'] = 0.0
+                features[f'rolling_vol_{name}'] = 0.0
         
         # 2. Parkinson volatility (high-low based estimator)
         if len(highs) >= 30:
@@ -124,17 +129,18 @@ class FeatureCalculator:
         else:
             features['garman_klass_vol'] = 0.0
         
-        # 4. Volatility percentile (current vol vs historical)
+        # 4. Volatility percentile — fully vectorized using stride trick (no Python loops)
         if len(returns) >= 60:
             current_vol = features['rolling_vol_30min']
-            hist_vols = []
-            for i in range(30, len(returns)):
-                if i >= 30:
-                    hist_vols.append(np.std(returns[i-30:i]) * annualization_factor)
-            
-            if len(hist_vols) > 0:
-                percentile = np.sum(np.array(hist_vols) < current_vol) / len(hist_vols)
-                features['vol_percentile'] = percentile
+            # Use numpy stride tricks: create a (N, 30) view without copying data
+            r = returns[-min(len(returns), 390):]  # cap at 1 day of history for speed
+            n = len(r)
+            if n >= 30:
+                shape = (n - 30 + 1, 30)
+                strides = (r.strides[0], r.strides[0])
+                windows = np.lib.stride_tricks.as_strided(r, shape=shape, strides=strides)
+                hist_vols = np.std(windows, axis=1) * annualization_factor
+                features['vol_percentile'] = float(np.mean(hist_vols < current_vol))
             else:
                 features['vol_percentile'] = 0.5
         else:

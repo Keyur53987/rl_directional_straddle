@@ -16,7 +16,7 @@ def main():
 
     # Optional: Set this to a specific timestamp (e.g., "20231027_103000") to load a specific old model.
     # If None, it automatically finds the latest one.
-    MODEL_ID = "20260203_203412"
+    MODEL_ID = "20260318_143036"
     # Set Random Seeds for Determinism
     SEED = 42
     import random
@@ -33,7 +33,6 @@ def main():
     torch.backends.cudnn.benchmark = False
 
     print(f"Loading Environment....")
-    # Testing Phase: 0% Forced Entry, 100% Agent Decided
     env = IntradayOptionEnv(data_path=DATA_PATH, start_date=START_DATE, end_date=END_DATE)
 
     # --- Model Selection Logic ---

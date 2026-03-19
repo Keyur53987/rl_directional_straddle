@@ -37,7 +37,7 @@ def main():
     N_SAMPLES = 7590 # Number of observations to collect
     
     # Auto-detect latest model
-    MODEL_ID = '20260205_122026_HPC'
+    MODEL_ID = '20260318_143036'
     BASE_MODEL_DIR = os.path.join('model', AGENT)
     if not os.path.exists(BASE_MODEL_DIR):
         print("No models found.")

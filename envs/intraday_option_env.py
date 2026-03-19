@@ -11,11 +11,27 @@ from utils.feature_calculator import FeatureCalculator
 class IntradayOptionEnv(gym.Env):
     metadata = {'render.modes': ['human']}
 
-    def __init__(self, data_path='data/sample_intraday.csv', start_date=None, end_date=None):
+    def __init__(self, data_path='data/train.csv', vix_data_path='data/INDIA_VIX.csv', start_date=None, end_date=None):
         super(IntradayOptionEnv, self).__init__()
         
         self.df = pd.read_csv(data_path)
         self.df['datetime'] = pd.to_datetime(self.df['datetime'])
+        
+        # Fast in-memory merge of VIX data if provided
+        if vix_data_path is not None:
+            vix_df = pd.read_csv(vix_data_path)
+            vix_df['datetime'] = pd.to_datetime(vix_df['datetime'])
+            
+            # Assuming standard naming ('close' or 'vix')
+            vix_col = 'vix'
+            if 'vix' not in vix_df.columns:
+                vix_col = 'close' if 'close' in vix_df.columns else vix_df.columns[1]
+                
+            vix_df = vix_df[['datetime', vix_col]].rename(columns={vix_col: 'vix'})
+            
+            # Merge left so we keep the exact timestamps of main intraday data
+            self.df = pd.merge(self.df, vix_df, on='datetime', how='left')
+            # Keeping missing VIX as strictly NaN as requested
         
         # Filter by date range if provided
         if start_date:
@@ -23,15 +39,22 @@ class IntradayOptionEnv(gym.Env):
         if end_date:
             self.df = self.df[self.df['datetime'] <= pd.to_datetime(end_date)]
             
-        self.dates = self.df['datetime'].dt.date.unique()
+        all_dates = self.df['datetime'].dt.date.unique()
+        # Episode start dates = Wednesdays only.
+        # NIFTY50 weekly expiry is Tuesday. Wednesday is the first day of a NEW expiry cycle.
+        # This ensures every episode spans a consistent full week (Wed→Tue), giving the agent
+        # the same ~5 days of multi-day experience regardless of which date is picked.
+        # If no Wednesday is available (e.g., holiday), we fall back to all dates.
+        wednesdays = [d for d in all_dates if d.weekday() == 2]  # 2 = Wednesday
+        self.dates = np.array(wednesdays) if len(wednesdays) > 10 else all_dates
         
         # Action Space: MultiDiscrete([3, 3])
         # [Call Action, Put Action]
         # 0=Hold, 1=Add(Buy), 2=Offload(Sell)
         self.action_space = spaces.MultiDiscrete([3, 3])
         
-        # Observation Space: 55 features
-        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(55,), dtype=np.float32)
+        # Observation Space: 63 features
+        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(65,), dtype=np.float32)
         
         # Feature calculator
         self.feature_calc = FeatureCalculator(window_size=config.WINDOW_SIZE)
@@ -68,41 +91,62 @@ class IntradayOptionEnv(gym.Env):
         self.day_high = 0.0
         self.day_low = float('inf')
         
-    def _get_current_volatility(self,vol_risk_premium=1.20):
+        # IV cache: recomputed once per step, reused in step() and _get_observation()
+        self._cached_iv = 0.15  # fallback bootstrap value until first computation
+        self._cached_iv_step = -1  # which step we cached at
+        
+    def _get_current_volatility(self, vol_risk_premium=1.20):
         """
-        Get current realized volatility to use as IV proxy.
-        Falls back to config.IV_ESTIMATE if realized vol is not available.
+        Get current Implied Volatility using India VIX.
+        Result is cached per step to avoid repeated expensive computation.
+        Falls back to 15-day realized vol if VIX is unavailable.
         """
-        # We need historical data to calculate volatility
-        hist_data = self.day_data.iloc[:self.current_step]
+        # Return cached value if we already computed it this step
+        if self._cached_iv_step == self.current_step:
+            return self._cached_iv
+        # 1. Use actual India VIX from the fast in-memory merged dataset
+        # Use VIX[T-1] (previous minute tick) to prevent look-ahead leakage.
+        # At decision time T you only know the LAST published VIX, not the simultaneous one.
+        if 'vix' in self.day_data.columns:
+            vix_lookup_step = max(0, self.current_step - 1)
+            vix_val = self.day_data.iloc[vix_lookup_step]['vix']
+            if pd.notna(vix_val) and vix_val > 0:
+                self._cached_iv = (vix_val / 100.0) * vol_risk_premium
+                self._cached_iv_step = self.current_step
+                return self._cached_iv
+
+        # 2. Fallback to historical calculation if VIX isn't found
+        # Use the pre-built incremental arrays (already bounded to 6000 rows) — no DataFrame slice needed
+        closes = np.array(self._hist_closes, dtype=np.float32)
+        highs  = np.array(self._hist_highs,  dtype=np.float32)
+        lows   = np.array(self._hist_lows,   dtype=np.float32)
+        opens  = np.array(self._hist_opens,  dtype=np.float32)
           
-        if len(hist_data) < 5:
-             return config.IV_ESTIMATE
-             
-        closes = hist_data['close'].values
-        highs = hist_data['high'].values
-        lows = hist_data['low'].values
-        opens = hist_data['open'].values
+        if len(closes) < 5:
+            # Not enough data — use a safe market-standard value (15% annualized)
+            return 0.15
         
         # Calculate Volatility Features
         vol_features = self.feature_calc.calculate_volatility_features(
             closes, highs, lows, opens, closes
         )
         
-        # Use 30min rolling vol as primary proxy
-        vol = vol_features.get('rolling_vol_30min', 0.0)
+        # Use 15-day realized volatility as primary proxy if VIX is unavailable
+        vol = vol_features.get('rolling_vol_15day', 0.0)
         
-        # Fallback logic if 30min vol is not available or too low (e.g. at start of day)
+        # Additional fallbacks just in case we don't have 15 days of history mapped yet
         if vol < 1e-4:
-             vol = vol_features.get('rolling_vol_15min', 0.0)
-             
+             vol = vol_features.get('rolling_vol_7day', 0.0)
         if vol < 1e-4:
-             vol = vol_features.get('rolling_vol_5min', 0.0)
-             
+             vol = vol_features.get('rolling_vol_1day', 0.0)
         if vol < 1e-4:
-            pass
+             vol = vol_features.get('rolling_vol_30min', 0.0)
              
-        return vol_risk_premium * vol
+        # Store in cache then return
+        self._cached_iv = vol_risk_premium * vol
+        self._cached_iv_step = self.current_step
+        return self._cached_iv
+
         
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
@@ -113,7 +157,36 @@ class IntradayOptionEnv(gym.Env):
         else:
             self.current_date_idx = np.random.randint(0, len(self.dates))
         date = self.dates[self.current_date_idx]
-        self.day_data = self.df[self.df['datetime'].dt.date == date].reset_index(drop=True)
+        
+        # --- Multi-day episode: load data from picked date up to next Tuesday (NIFTY expiry) ---
+        import datetime as dt_lib
+        expiry_day_num = config.EXPIRY_DAY_OF_WEEK          # 1 = Tuesday
+        days_ahead = (expiry_day_num - date.weekday()) % 7
+        if days_ahead == 0:
+            days_ahead = 7  # if picked day IS expiry day, go to NEXT week's expiry
+        expiry_date = date + dt_lib.timedelta(days=days_ahead)
+        # Safety cap to avoid runaway episodes
+        max_end = date + dt_lib.timedelta(days=config.MAX_EPISODE_DAYS)
+        expiry_date = min(expiry_date, max_end)
+        self.episode_expiry_dt = pd.to_datetime(f"{expiry_date} {config.END_TIME}")
+        
+        # Load all minute rows from start date through expiry date
+        mask = (self.df['datetime'].dt.date >= date) & (self.df['datetime'].dt.date <= expiry_date)
+        self.day_data = self.df[mask].reset_index(drop=True)
+        
+        # Track global index for historical window access (uses first day of episode)
+        day_indices = self.df.index[self.df['datetime'].dt.date == date].tolist()
+        self.global_start_idx = day_indices[0] if day_indices else 0
+        
+        # Pre-load historical OHLC window (up to 15 days prior) into NumPy arrays at episode start.
+        # _get_observation() will append 1 row per step instead of re-slicing the full DataFrame.
+        pre_end   = self.global_start_idx         # exclusive: rows before today
+        pre_start = max(0, pre_end - 6000)        # up to ~15 trading days
+        pre_hist  = self.df.iloc[pre_start:pre_end]
+        self._hist_closes = pre_hist['close'].values.tolist()  # grow by 1 each step
+        self._hist_highs  = pre_hist['high'].values.tolist()
+        self._hist_lows   = pre_hist['low'].values.tolist()
+        self._hist_opens  = pre_hist['open'].values.tolist()
         
         # Fast forward to 9:30 AM
         start_time = pd.to_datetime(f"{date} {config.START_TIME}")
@@ -419,6 +492,18 @@ class IntradayOptionEnv(gym.Env):
         done = False
         truncated = False
         
+        # Append current row into incremental history (trim to 6000 rows to bound memory)
+        row = self.day_data.iloc[self.current_step - 1]
+        self._hist_closes.append(float(row['close']))
+        self._hist_highs.append(float(row['high']))
+        self._hist_lows.append(float(row['low']))
+        self._hist_opens.append(float(row['open']))
+        if len(self._hist_closes) > 6000:
+            self._hist_closes.pop(0)
+            self._hist_highs.pop(0)
+            self._hist_lows.pop(0)
+            self._hist_opens.pop(0)
+        
         # Update day high/low
         if self.current_step < len(self.day_data):
             next_row = self.day_data.iloc[self.current_step]
@@ -443,43 +528,25 @@ class IntradayOptionEnv(gym.Env):
             ce_price = ce_price_curr
             pe_price = pe_price_curr
         
-        # Check Time Exit
-        end_time = pd.to_datetime(f"{current_time.date()} {config.END_TIME}")
-        if current_time >= end_time or done:
+        # Episode ends at weekly expiry time or end of data — NOT at daily EOD
+        if done or current_time >= self.episode_expiry_dt:
             done = True
-            # Close All Remaining
+            # Graceful close at expiry — treated as a normal trade with transaction costs (no penalty)
             pnl_ce = (ce_price - self.entry_price_ce) * self.ce_lots * config.LOT_SIZE
             pnl_pe = (pe_price - self.entry_price_pe) * self.pe_lots * config.LOT_SIZE
-            
             if config.STRATEGY_TYPE == 'SHORT':
                 pnl_ce = (self.entry_price_ce - ce_price) * self.ce_lots * config.LOT_SIZE
                 pnl_pe = (self.entry_price_pe - pe_price) * self.pe_lots * config.LOT_SIZE
-            
-            # Apply Transaction Costs to Auto-Close
             cost_ce = (ce_price * self.ce_lots * config.LOT_SIZE) * config.TRANSACTION_COST_PCT
             cost_pe = (pe_price * self.pe_lots * config.LOT_SIZE) * config.TRANSACTION_COST_PCT
-            
             pnl_ce -= cost_ce
             pnl_pe -= cost_pe
-                
             self.realized_pnl += (pnl_ce + pnl_pe)
-            self.total_turnover += abs(pnl_ce) + abs(pnl_pe)  # Track forced close turnover
-            
-            # Forced Exit Penalty
-            # If we had open positions that were auto-closed, we penalize the agent.
-            forced_close_lots = 0
+            self.total_turnover += abs(pnl_ce) + abs(pnl_pe)
             if self.ce_lots > 0 or self.pe_lots > 0:
-                forced_close_lots = self.ce_lots + self.pe_lots
-                self.total_trades += forced_close_lots  # Count forced close lots
-            
-            # Close positions
-            self.ce_lots = 0 
+                self.total_trades += self.ce_lots + self.pe_lots
+            self.ce_lots = 0
             self.pe_lots = 0
-            # Note: We don't log "Close All" as individual trades yet, but ideally should for perfection.
-            # Leaving as is for now to avoid complexity in End Logic.
-            
-        else:
-            forced_close_lots = 0 # No forced close
             
         # --- CALCULATE REWARD ---
         # Unrealized PnL
@@ -505,18 +572,33 @@ class IntradayOptionEnv(gym.Env):
         if current_drawdown > self.max_drawdown: 
             self.max_drawdown = current_drawdown
         
-        # Reward Formula: λ_pnl * ROI + λ_step * StepPnL - λ_dd * Drawdown - λ_trade * Trades - λ_to * Turnover - λ_exit * ForcedLots
-        denom = max(self.premium_deployed, 1.0) # Avoid division by zero
-        episode_length = max(len(self.day_data), 1)  # Normalize trade count by episode length
-        reward = config.PNL_LAMBDA * (self.total_pnl / denom) \
-                 + config.STEP_PNL_LAMBDA * (step_pnl / denom) \
-                 - config.DRAWDOWN_LAMBDA * (self.max_drawdown / denom) \
-                 - config.TRADE_PENALTY_LAMBDA * (self.total_trades / episode_length) \
-                 - config.TURNOVER_LAMBDA * (self.total_turnover / denom)
+        # Reward Formula (all terms normalised by INITIAL_CAPITAL for stable scale)
+        # ─────────────────────────────────────────────────────────────────────────
+        # denom: fixed at INITIAL_CAPITAL so reward scale is consistent across all
+        # steps and episodes (avoids exploding rewards at step 0 when no capital deployed yet)
+        denom = config.INITIAL_CAPITAL
         
-        # Apply Forced Exit Penalty — scales with remaining lots at close
-        if forced_close_lots > 0:
-            reward -= config.FORCED_EXIT_LAMBDA * (forced_close_lots / (2 * config.MAX_LOTS))
+        # 1. Cumulative ROI: encourages profit growth across the full episode
+        roi_term = config.PNL_LAMBDA * (self.total_pnl / denom)
+        
+        # 2. Step PnL: immediate feedback — teaches which moves help right now
+        step_term = config.STEP_PNL_LAMBDA * (step_pnl / denom)
+        
+        # 3. Current drawdown penalty (NOT max): agent can recover from a dip without
+        #    being permanently punished all episode. Discourages staying in a losing position.
+        current_drawdown = self.peak_pnl - self.total_pnl
+        dd_term = config.DRAWDOWN_LAMBDA * (current_drawdown / denom)
+        
+        # 4. Overtrading penalty: normalised by MAX_LOTS so it scales correctly
+        #    regardless of episode length (works for both 375-step and 1500-step episodes)
+        trade_term = config.TRADE_PENALTY_LAMBDA * (self.total_trades / max(config.MAX_LOTS, 1))
+        
+        # 5. Turnover penalty: notional capital churned, NOT abs(pnl)
+        #    Discourages churning the book without adding value
+        notional_traded = self.total_turnover  # already tracked as raw notional in step()
+        to_term = config.TURNOVER_LAMBDA * (notional_traded / denom)
+        
+        reward = roi_term + step_term - dd_term - trade_term - to_term
         
         # Info
         info = {
@@ -524,9 +606,10 @@ class IntradayOptionEnv(gym.Env):
             'realized_pnl': self.realized_pnl,
             'roi': self.total_pnl / denom,
             'step_pnl': step_pnl,
+            'current_drawdown_pct': current_drawdown / denom,
             'max_drawdown_pct': self.max_drawdown / denom,
             'total_trades': self.total_trades,
-            'turnover': self.total_turnover
+            'turnover': notional_traded
         }
         
         return self._get_observation(), reward, done, truncated, info
@@ -594,27 +677,23 @@ class IntradayOptionEnv(gym.Env):
 
     def _get_observation(self):
         """
-        Calculate all 55 features from real OHLC data.
+        Calculate all 65 features from real OHLC data.
         NO simulated data - everything derived from actual market data.
         """
-        obs = np.zeros(55, dtype=np.float32)
+        obs = np.zeros(65, dtype=np.float32)
         idx = 0
         
-        # Get historical data up to current step
-        hist_data = self.day_data.iloc[:self.current_step]
+        # Use pre-built incremental history arrays — O(1) access vs O(n) DataFrame slice
+        closes = np.array(self._hist_closes, dtype=np.float32)
+        highs  = np.array(self._hist_highs,  dtype=np.float32)
+        lows   = np.array(self._hist_lows,   dtype=np.float32)
+        opens  = np.array(self._hist_opens,  dtype=np.float32)
         
-        if len(hist_data) == 0:
+        if len(closes) == 0:
             return obs
         
-        # Extract OHLC arrays
-        closes = hist_data['close'].values
-        highs = hist_data['high'].values
-        lows = hist_data['low'].values
-        opens = hist_data['open'].values
-        
-        current_row = hist_data.iloc[-1]
-        current_price = current_row['close']
-        current_time = current_row['datetime']
+        current_price = closes[-1]
+        current_time = self.day_data.iloc[self.current_step - 1]['datetime']
         
         # 1. Volatility Features (12 features) - CRITICAL
         vol_features = self.feature_calc.calculate_volatility_features(
@@ -624,16 +703,22 @@ class IntradayOptionEnv(gym.Env):
         obs[idx] = vol_features.get('rolling_vol_15min', 0.0); idx += 1
         obs[idx] = vol_features.get('rolling_vol_30min', 0.0); idx += 1
         obs[idx] = vol_features.get('rolling_vol_60min', 0.0); idx += 1
+        obs[idx] = vol_features.get('rolling_vol_1day', 0.0); idx += 1
+        obs[idx] = vol_features.get('rolling_vol_7day', 0.0); idx += 1
+        obs[idx] = vol_features.get('rolling_vol_15day', 0.0); idx += 1
         obs[idx] = vol_features.get('parkinson_vol', 0.0); idx += 1
         obs[idx] = vol_features.get('garman_klass_vol', 0.0); idx += 1
         obs[idx] = vol_features.get('vol_percentile', 0.5); idx += 1
         obs[idx] = vol_features.get('vol_of_vol', 0.0); idx += 1
         obs[idx] = vol_features.get('vol_trend', 0.0); idx += 1
-        # IV vs Realized spread
+        # IV vs Realized spread (Variance Risk Premium)
         realized_vol = vol_features.get('rolling_vol_30min', 0.0)
-        obs[idx] = config.IV_ESTIMATE - realized_vol; idx += 1
-        # Padding for future volatility features
-        obs[idx] = 0.0; idx += 1
+        current_iv = self._get_current_volatility()
+        # If IV < Realized, options are relatively cheap (good for long straddle)
+        obs[idx] = current_iv - realized_vol; idx += 1
+        # Feed the actual IV (VIX) to the agent
+        obs[idx] = current_iv; idx += 1
+        # Padding to maintain 55 features
         obs[idx] = 0.0; idx += 1
         
         # 2. Price & Returns (10 features)
@@ -669,10 +754,15 @@ class IntradayOptionEnv(gym.Env):
         obs[idx] = ce_greeks['delta']; idx += 1
         obs[idx] = pe_greeks['delta']; idx += 1
         obs[idx] = ce_greeks['gamma']; idx += 1
+        obs[idx] = pe_greeks['gamma']; idx += 1
         obs[idx] = ce_greeks['vega']; idx += 1
+        obs[idx] = pe_greeks['vega']; idx += 1
         obs[idx] = ce_greeks['theta']; idx += 1
-        obs[idx] = ce_greeks['vanna']; idx += 1  # Second-order
-        obs[idx] = ce_greeks['volga']; idx += 1  # Second-order
+        obs[idx] = pe_greeks['theta']; idx += 1
+        obs[idx] = ce_greeks['vanna']; idx += 1  
+        obs[idx] = pe_greeks['vanna']; idx += 1  
+        obs[idx] = ce_greeks['volga']; idx += 1  
+        obs[idx] = pe_greeks['volga']; idx += 1  
         obs[idx] = position_greeks['net_delta'] / 10000.0; idx += 1  # Normalized
         obs[idx] = position_greeks['gamma_exposure'] / 1000.0; idx += 1  # Normalized
         obs[idx] = position_greeks['vega_exposure'] / 10000.0; idx += 1  # Normalized
@@ -737,5 +827,16 @@ class IntradayOptionEnv(gym.Env):
         
         # Replace NaN/Inf with 0
         obs = np.nan_to_num(obs, nan=0.0, posinf=1.0, neginf=-1.0)
+        
+        # 8. Multi-day episode features (2 features) [indices 63-64]
+        # days_to_expiry: normalized 0-1 (1.0 = full week remaining, 0.0 = at expiry)
+        seconds_remaining = max((self.episode_expiry_dt - current_time).total_seconds(), 0)
+        total_episode_seconds = config.MAX_EPISODE_DAYS * 24 * 3600
+        obs[idx] = float(seconds_remaining / total_episode_seconds); idx += 1
+        
+        # is_overnight: 1.0 if we are outside market hours (between 15:15 and 09:15)
+        hour = current_time.hour
+        is_overnight = 1.0 if (hour >= 15 or hour < 9) else 0.0
+        obs[idx] = is_overnight; idx += 1
         
         return obs

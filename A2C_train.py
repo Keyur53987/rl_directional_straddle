@@ -7,7 +7,7 @@ import config
 import os
 import matplotlib.pyplot as plt
 from stable_baselines3.common.monitor import Monitor
-from stable_baselines3 import PPO
+from stable_baselines3 import A2C
 from stable_baselines3.common.vec_env import SubprocVecEnv
 from stable_baselines3.common.env_util import make_vec_env
 
@@ -17,10 +17,10 @@ def plot_results(log_folder, save_folder, title='Learning Curve'):
     """
     x, y = [], []
     try:
-        # PPO logs are saved in monitor.csv in the log_folder
+        # A2C logs are saved in monitor.csv in the log_folder
         # Stable Baselines3 Monitor saves as <timestamp>.monitor.csv or monitor.csv
         import glob
-        monitor_files = glob.glob(os.path.join(log_folder, "*.monitor.csv"))
+        monitor_files = glob.glob(os.path.join(log_folder, "**", "*.monitor.csv"), recursive=True)
         if not monitor_files:
             print("No monitor files found.")
             return
@@ -79,25 +79,33 @@ def main():
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
     
-    TIMESTAMP = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    CURRENT_RUN_ID = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     
     # MODE = 'add'  # 'add' or 'ratio'
-    AGENT = 'PPO' # Agent Name
+    AGENT = 'A2C' # Agent Name
     
     # Path to a saved model to retrain/continue training
-    # Set this to the absolute path of the model zip file, e.g., "model/PPO/20231027_120000/ppo_intraday_model.zip"
     # If None, a new model is created.
     RETRAIN_MODEL_PATH = None 
 
-    
-    # Structure: model/PPO/{TIMESTAMP}/
-    BASE_DIR = os.path.join('model', AGENT)
-    SAVE_DIR = os.path.join(BASE_DIR, TIMESTAMP)
+    if RETRAIN_MODEL_PATH and os.path.exists(RETRAIN_MODEL_PATH):
+        SAVE_DIR = os.path.dirname(RETRAIN_MODEL_PATH)
+        TIMESTAMP = os.path.basename(SAVE_DIR)
+        print(f"Resuming training in existing directory: {SAVE_DIR}")
+    else:
+        TIMESTAMP = CURRENT_RUN_ID
+        # Structure: model/A2C/{TIMESTAMP}/
+        BASE_DIR = os.path.join('model', AGENT)
+        SAVE_DIR = os.path.join(BASE_DIR, TIMESTAMP)
     
     # Artifacts inside the timestamped folder
     SAVE_PATH = os.path.join(SAVE_DIR, f'{AGENT.lower()}_intraday_model')
     LOG_DIR = os.path.join(SAVE_DIR, 'logs')
+    MONITOR_DIR = os.path.join(LOG_DIR, f"monitor_{CURRENT_RUN_ID}")
+    EVAL_MONITOR_DIR = os.path.join(SAVE_DIR, 'eval_monitor', f"eval_{CURRENT_RUN_ID}")
+    
     DATA_PATH = 'data/train.csv'
+    VIX_DATA_PATH = 'data/INDIA_VIX.csv'
     START_DATE = "2021-01-01"  # Training: 6 Years
     END_DATE = "2022-12-31"    # Validation is 2021 (set below)
     NUM_ENVS = 4  # Number of parallel environments (adjust based on CPU cores)
@@ -105,6 +113,8 @@ def main():
     # Create directories
     os.makedirs(SAVE_DIR, exist_ok=True)
     os.makedirs(LOG_DIR, exist_ok=True)
+    os.makedirs(MONITOR_DIR, exist_ok=True)
+    os.makedirs(EVAL_MONITOR_DIR, exist_ok=True)
 
     print(f"Starting {NUM_ENVS} Parallel Environments.")
     print(f"Using SubprocVecEnv for multiprocessing speedup.")
@@ -114,6 +124,7 @@ def main():
         # We need to pass lambda function to make_vec_env
         env_kwargs = {
             'data_path': DATA_PATH, 
+            'vix_data_path': VIX_DATA_PATH,
             'start_date': START_DATE, 
             'end_date': END_DATE
         }
@@ -121,10 +132,10 @@ def main():
         env = make_vec_env(
             IntradayOptionEnv,
             n_envs=NUM_ENVS,
-            seed=0,
+            seed=42,
             vec_env_cls=SubprocVecEnv,
             env_kwargs=env_kwargs,
-            monitor_dir=LOG_DIR  # Automatically wraps with Monitor
+            monitor_dir=MONITOR_DIR  # Automatically wraps with Monitor, saved in unique run subfolder
         )
 
         # Create Validation Environment (Prevent Overfitting)
@@ -136,6 +147,7 @@ def main():
         print(f"Creating Validation Environment ({VAL_START_DATE} to {VAL_END_DATE})...")
         eval_env_kwargs = {
             'data_path': DATA_PATH, 
+            'vix_data_path': VIX_DATA_PATH,
             'start_date': VAL_START_DATE, 
             'end_date': VAL_END_DATE
         }
@@ -144,10 +156,10 @@ def main():
         eval_env = make_vec_env(
             IntradayOptionEnv,
             n_envs=1,
-            seed=0,
+            seed=42,
             vec_env_cls=SubprocVecEnv,
             env_kwargs=eval_env_kwargs,
-            monitor_dir=os.path.join(SAVE_DIR, 'eval_monitor')
+            monitor_dir=EVAL_MONITOR_DIR
         )
 
         from stable_baselines3.common.callbacks import EvalCallback, CheckpointCallback
@@ -162,24 +174,27 @@ def main():
         checkpoint_callback = CheckpointCallback(save_freq=10000, save_path=SAVE_DIR,
                                                  name_prefix=f'{AGENT.lower()}_intraday_checkpoint')
 
-        print("Training PPO Agent...")
+        print(f"Training {AGENT} Agent...")
         # User-customized training parameters for 1-minute data
-        learning_rate = 0.001
-        n_steps = 512
-        batch_size = 2048
+        learning_rate = 0.0007  # Default for A2C
+        n_steps = 5  # Default for A2C
         gamma = 0.99
+        ent_coef = 0.001
         total_timesteps = 2_000_000
         
         if RETRAIN_MODEL_PATH and os.path.exists(RETRAIN_MODEL_PATH):
             print(f"Loading existing model from: {RETRAIN_MODEL_PATH}")
-            model = PPO.load(RETRAIN_MODEL_PATH, env=env, tensorboard_log=LOG_DIR, device='cuda')
+            model = A2C.load(RETRAIN_MODEL_PATH, env=env, tensorboard_log=LOG_DIR, device='cuda')
         else:
-            print("Creating a NEW PPO Agent with defined parameters...")
-            model = PPO("MlpPolicy", env, seed=42, verbose=1, learning_rate=learning_rate, n_steps=n_steps, batch_size=batch_size, gamma=gamma, tensorboard_log=LOG_DIR, device='cuda')
+            print(f"Creating a NEW {AGENT} Agent with defined parameters...")
+            model = A2C("MlpPolicy", env, seed=42, verbose=1, 
+                        learning_rate=learning_rate, n_steps=n_steps, gamma=gamma, 
+                        ent_coef=ent_coef, tensorboard_log=LOG_DIR, device='cuda')
 
         
         # training with callbacks
-        model.learn(total_timesteps=total_timesteps, callback=[eval_callback, checkpoint_callback], progress_bar=True)
+        reset_num_timesteps = False if (RETRAIN_MODEL_PATH and os.path.exists(RETRAIN_MODEL_PATH)) else True
+        model.learn(total_timesteps=total_timesteps, callback=[eval_callback, checkpoint_callback], progress_bar=True, reset_num_timesteps=reset_num_timesteps)
         print("Training Finished.")
 
         # Save final model as well
@@ -206,7 +221,6 @@ def main():
                 "policy": "MlpPolicy",
                 "learning_rate": learning_rate,
                 "n_steps": n_steps,
-                "batch_size": batch_size,
                 "gamma": gamma,
                 "ent_coef": ent_coef,
                 "total_timesteps": total_timesteps
@@ -234,8 +248,7 @@ def main():
                 "ATR_MULTIPLIER": config.ATR_MULTIPLIER,
                 "EXPIRY_DAY_OF_WEEK": config.EXPIRY_DAY_OF_WEEK,
                 "WINDOW_SIZE": config.WINDOW_SIZE,
-                "RISK_FREE_RATE": config.RISK_FREE_RATE,
-                "IV_ESTIMATE": config.IV_ESTIMATE
+                "RISK_FREE_RATE": config.RISK_FREE_RATE
             }
         }
         

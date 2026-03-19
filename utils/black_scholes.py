@@ -42,6 +42,23 @@ def black_scholes(S, K, T, r, sigma, option_type='call'):
             'volga': volga/vomma (second-order)
         }
     """
+    # Handle edge case: zero / near-zero volatility
+    if sigma < 1e-8:
+        # With no volatility, option is worth its discounted intrinsic value
+        intrinsic = S - K * np.exp(-r * T) if option_type == 'call' else K * np.exp(-r * T) - S
+        price = max(0.0, intrinsic)
+        delta = 1.0 if (option_type == 'call' and S > K * np.exp(-r * T)) else 0.0
+
+        return {
+            'price': price,
+            'delta': delta,
+            'gamma': 0.0,
+            'vega': 0.0,
+            'theta': 0.0,
+            'vanna': 0.0,
+            'volga': 0.0
+        }
+
     # Handle edge case: very small time to expiry
     if T < 1e-6:
         # At expiry, option worth intrinsic value only
