@@ -282,62 +282,34 @@ class IntradayOptionEnv(gym.Env):
         # Unpack actions
         # action is now [ce_action, pe_action]
         # 0=Hold, 1=Add(Buy), 2=Offload(Sell)
-        ce_action = action[0]
-        pe_action = action[1]
+        ce_action = int(action[0])
+        pe_action = int(action[1])
+        
+        # Save original requested actions BEFORE any blocking
+        # (used later to compute invalid-action penalty)
+        requested_ce_action = ce_action
+        requested_pe_action = pe_action
         
         # --- Ratio Maintenance Logic (Prevent Naked Positions) ---
-        # Calculate tentative future lots
-        future_ce_lots = self.ce_lots
-        if ce_action == 1: future_ce_lots += 1 #Buy
-        elif ce_action == 2 and self.ce_lots > 0: future_ce_lots -= 1 #sell
-        
-        future_pe_lots = self.pe_lots
-        if pe_action == 1: future_pe_lots += 1 #Buy
-        elif pe_action == 2 and self.pe_lots > 0: future_pe_lots -= 1 #sell
-        
-        # Check constraints
-        is_naked_call = (future_ce_lots > 0 and future_pe_lots == 0)
-        is_naked_put = (future_pe_lots > 0 and future_ce_lots == 0)
-        
-        if is_naked_call:
-            # Revert action that caused naked call
-            if self.pe_lots == 0 and pe_action != 1: 
-                # Case: Trying to buy CE but not PE. Block CE buy.
-                if ce_action == 1: ce_action = 0 # Force Hold
-            elif self.pe_lots > 0 and future_pe_lots == 0:
-                 # Case: Selling last PE while keeping CE. Block PE sell.
-                 if pe_action == 2: pe_action = 0 # Force Hold
-                 
-            # Double check if still naked (e.g. if we reverted one but other condition persists?)
-            # Actually, simpler logic:
-            # If Result is Naked Call -> Cancel the CE Buy OR Cancel the PE Sell
-        
-        if is_naked_put:
-             if self.ce_lots == 0 and ce_action != 1:
-                 if pe_action == 1: pe_action = 0
-             elif self.ce_lots > 0 and future_ce_lots == 0:
-                 if ce_action == 2: ce_action = 0
-                 
-        # Re-calc check for safety/simplicity in one block:
-        # If [1, 0] from [0, 0] -> Future [1, 0] (Naked Call). 
-        #   Action causing it is CE=1. Revert CE=1 to 0.
-        # If [2, 0] from [1, 1] -> Future [0, 1] (Naked Put).
-        #   Action causing it is CE=2. Revert CE=2 to 0.
-        
-        # Final Robust Implementation:
-        future_ce_lots = self.ce_lots + (1 if ce_action==1 else (-1 if (ce_action==2 and self.ce_lots>0) else 0))
-        future_pe_lots = self.pe_lots + (1 if pe_action==1 else (-1 if (pe_action==2 and self.pe_lots>0) else 0))
-        
-        if future_ce_lots > 0 and future_pe_lots == 0:
-            # Block the move creating asymmetry
-            # If we bought CE, cancel buy
-            if ce_action == 1 and self.ce_lots == future_ce_lots - 1: ce_action = 0
-            # If we sold PE, cancel sell
-            if pe_action == 2 and self.pe_lots == future_pe_lots + 1: pe_action = 0
-            
-        if future_pe_lots > 0 and future_ce_lots == 0:
-            if pe_action == 1 and self.pe_lots == future_pe_lots - 1: pe_action = 0
-            if ce_action == 2 and self.ce_lots == future_ce_lots + 1: ce_action = 0
+        # Compute what future lots would look like if we executed both actions AS-IS.
+        future_ce_lots = self.ce_lots + (1 if ce_action == 1 else (-1 if (ce_action == 2 and self.ce_lots > 0) else 0))
+        future_pe_lots = self.pe_lots + (1 if pe_action == 1 else (-1 if (pe_action == 2 and self.pe_lots > 0) else 0))
+
+        # ALL-OR-NOTHING BLOCK:
+        # If the combined action pair would create a naked position (CE only or PE only),
+        # we reject the ENTIRE pair and force both legs to HOLD.
+        # This is the correct approach: a partial execution (one leg succeeds, one blocked)
+        # would put the model in an unintended state, corrupting future observations.
+        # By forcing HOLD-HOLD, the state is unchanged and the penalty is a clean signal.
+        is_naked = (future_ce_lots > 0 and future_pe_lots == 0) or \
+                   (future_pe_lots > 0 and future_ce_lots == 0)
+
+        if is_naked:
+            ce_action = 0  # Force entire pair to HOLD
+            pe_action = 0
+
+        # Track whether the naked-position guard fired on this step
+        action_was_blocked = (ce_action != requested_ce_action) or (pe_action != requested_pe_action)
         # ---------------------------------------------------------
         
         current_step_row = self.day_data.iloc[self.current_step]
@@ -598,7 +570,13 @@ class IntradayOptionEnv(gym.Env):
         notional_traded = self.total_turnover  # already tracked as raw notional in step()
         to_term = config.TURNOVER_LAMBDA * (notional_traded / denom)
         
-        reward = roi_term + step_term - dd_term - trade_term - to_term
+        # 6. Invalid-action penalty: small fixed cost when the naked-position guard
+        #    fires and overrides what the model requested. This closes the training-live
+        #    gap — the model now receives a negative signal telling it to stop asking
+        #    for actions it knows will be rejected.
+        invalid_term = config.INVALID_ACTION_PENALTY if action_was_blocked else 0.0
+        
+        reward = roi_term + step_term - dd_term - trade_term - to_term - invalid_term
         
         # Info
         info = {
@@ -609,7 +587,8 @@ class IntradayOptionEnv(gym.Env):
             'current_drawdown_pct': current_drawdown / denom,
             'max_drawdown_pct': self.max_drawdown / denom,
             'total_trades': self.total_trades,
-            'turnover': notional_traded
+            'turnover': notional_traded,
+            'action_blocked': action_was_blocked,
         }
         
         return self._get_observation(), reward, done, truncated, info

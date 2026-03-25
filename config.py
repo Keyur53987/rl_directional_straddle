@@ -31,6 +31,12 @@ STEP_PNL_LAMBDA = 0.5           # Weight for step-wise PnL (immediate feedback, 
 DRAWDOWN_LAMBDA = 0.5           # Penalty weight for current drawdown
 TRADE_PENALTY_LAMBDA = 0.01     # Penalty per lot traded / MAX_LOTS (was 0.2 — way too large with new norm)
 TURNOVER_LAMBDA = 0.05          # Penalty weight for notional churned
+INVALID_ACTION_PENALTY = 0.5   # Hard penalty per blocked action (naked-position guard).
+                                 # Deliberately large: must outweigh any single-step profit so the
+                                 # model never finds it worth requesting an illegal action even when
+                                 # market conditions would otherwise make it profitable.
+                                 # Scale reference: roi_term for ₹250k PnL step ≈ 0.5 → this penalty
+                                 # equals losing a very large profitable step in one shot.
 # FORCED_EXIT_LAMBDA removed: episodes now run to expiry, no forced EOD close
 
 # Environment Settings (1-minute data)

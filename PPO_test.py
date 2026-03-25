@@ -10,13 +10,14 @@ import datetime
 def main():
     # Configuration
     AGENT = 'PPO'
-    DATA_PATH = 'data/test.csv'
-    START_DATE = "2020-01-01"  # User can filter range
-    END_DATE = "2020-12-31"    # User can filter range
+    DATA_PATH = 'data/NIFTY50_2025.csv'
+    VIX_DATA_PATH = 'data/INDIA_VIX.csv'
+    START_DATE = "2025-01-01"  # User can filter range
+    END_DATE = "2025-12-31"    # User can filter range
 
     # Optional: Set this to a specific timestamp (e.g., "20231027_103000") to load a specific old model.
     # If None, it automatically finds the latest one.
-    MODEL_ID = "20260318_143036"
+    MODEL_ID = "20260319_153920_HPC"
     # Set Random Seeds for Determinism
     SEED = 42
     import random
@@ -33,7 +34,7 @@ def main():
     torch.backends.cudnn.benchmark = False
 
     print(f"Loading Environment....")
-    env = IntradayOptionEnv(data_path=DATA_PATH, start_date=START_DATE, end_date=END_DATE)
+    env = IntradayOptionEnv(data_path=DATA_PATH, vix_data_path=VIX_DATA_PATH, start_date=START_DATE, end_date=END_DATE)
 
     # --- Model Selection Logic ---
     BASE_MODEL_DIR = os.path.join('model', AGENT)
@@ -58,7 +59,7 @@ def main():
 
     # Define Paths based on Model ID
     MODEL_DIR = os.path.join(BASE_MODEL_DIR, MODEL_ID)
-    RESULTS_DIR = os.path.join(MODEL_DIR, 'results_2020')
+    RESULTS_DIR = os.path.join(MODEL_DIR, 'results')
     os.makedirs(RESULTS_DIR, exist_ok=True)
     
     # Check if model exists
@@ -191,7 +192,27 @@ def main():
         sharpe = (daily_returns.mean() / daily_returns.std()) * np.sqrt(252)
     else:
         sharpe = 0.0
-        
+
+    # Sortino Ratio (penalises only downside volatility)
+    downside_returns = daily_returns[daily_returns < 0]
+    if len(downside_returns) > 0 and downside_returns.std() != 0:
+        sortino = (daily_returns.mean() / downside_returns.std()) * np.sqrt(252)
+    else:
+        sortino = 0.0
+
+    # Profit Factor (gross profit / gross loss)
+    gross_profit = df_daily.loc[df_daily['pnl'] > 0, 'pnl'].sum()
+    gross_loss   = abs(df_daily.loc[df_daily['pnl'] < 0, 'pnl'].sum())
+    profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else float('inf')
+
+    # Expectancy (average PnL per trade, weighted by win/loss rate)
+    losses = df_daily[df_daily['pnl'] <= 0]
+    avg_win  = wins['pnl'].mean()   if len(wins) > 0   else 0.0
+    avg_loss = losses['pnl'].mean() if len(losses) > 0 else 0.0
+    win_prob  = len(wins) / len(df_daily)   if len(df_daily) > 0 else 0.0
+    loss_prob = len(losses) / len(df_daily) if len(df_daily) > 0 else 0.0
+    expectancy = (win_prob * avg_win) + (loss_prob * avg_loss)  # avg_loss is already negative
+
     overall_res = [{
         'total_pnl': round(total_pnl, 2),
         'overall_roi_pct': round(overall_roi, 2),
@@ -200,7 +221,10 @@ def main():
         'win_rate_pct': round(win_rate, 2),
         'avg_trades_per_day': round(avg_trades, 1),
         'total_trades': total_trades,
-        'sharpe_ratio': round(sharpe, 4)
+        'sharpe_ratio': round(sharpe, 4),
+        'sortino_ratio': round(sortino, 4),
+        'profit_factor': round(profit_factor, 4),
+        'expectancy': round(expectancy, 2)
     }]
     
     df_overall = pd.DataFrame(overall_res)

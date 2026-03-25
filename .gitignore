@@ -2,3 +2,6 @@ __pycache__
 /Docs
 /envs/__pycache__
 /utils/__pycache__
+/.pytest_cache
+/live_execution
+/model
