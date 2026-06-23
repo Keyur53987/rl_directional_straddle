@@ -1,0 +1,59 @@
+{
+    "timestamp": "20260425_124628",
+    "agent": "MaskablePPO",
+    "environment_version": "v3",
+    "training_data": {
+        "path": "data/train.csv",
+        "start_date": "2020-01-01",
+        "end_date": "2023-12-31"
+    },
+    "validation_data": {
+        "start_date": "2024-01-01",
+        "end_date": "2024-12-31"
+    },
+    "model_parameters": {
+        "policy": "MlpPolicy",
+        "learning_rate": 0.001,
+        "n_steps": 1024,
+        "batch_size": 256,
+        "gamma": 0.99,
+        "ent_coef": 0.05,
+        "total_timesteps": 30000000
+    },
+    "reward_settings": {
+        "REWARD_NORMALIZER": 5000.0,
+        "PNL_W1": 0.2,
+        "PNL_W30": 0.6,
+        "PNL_W120": 0.2,
+        "DRAWDOWN_LAMBDA": 0.01,
+        "WIN_BONUS": 2.0,
+        "NO_TRADE_PENALTY": 1.0
+    },
+    "margin_settings": {
+        "SPAN_STDEV_COVERAGE": 3.5,
+        "SPAN_MPOR_DAYS": 2,
+        "SPAN_VOL_STRESS": 0.25,
+        "EXPOSURE_MARGIN_PCT": 0.03
+    },
+    "config_parameters": {
+        "INITIAL_CAPITAL": 1000000.0,
+        "MAX_LOTS": 10,
+        "TRANSACTION_COST_PCT": 0.005,
+        "SLIPPAGE_PCT": 0.005,
+        "START_TIME": "09:15",
+        "END_TIME": "15:30",
+        "STRADDLE_STRIKE_GAP": 100,
+        "LOT_SIZE": 65,
+        "POSITION_MODE": "BOTH",
+        "STRIKE_SELECTION_METHOD": "ATM",
+        "EXPIRY_DAY_OF_WEEK": 1,
+        "MAX_EPISODE_DAYS": 5,
+        "WINDOW_SIZE": 150,
+        "RISK_FREE_RATE": 0.06
+    },
+    "pnl_tracking": {
+        "total_episodes": 20881,
+        "final_50_avg_pnl": 8711.680392767403,
+        "final_50_win_rate": 0.3
+    }
+}

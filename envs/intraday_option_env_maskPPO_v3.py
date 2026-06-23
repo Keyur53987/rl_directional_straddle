@@ -104,6 +104,7 @@ class IntradayOptionEnvV3(gym.Env):
         self.total_pnl = 0.0
         self.peak_pnl = 0.0
         self.max_drawdown = 0.0
+        self._prev_drawdown = 0.0
         self.premium_deployed = 0.0
         self.pnl_curve = []
         self.ce_pnl_curve = []       # v3: per-leg CE TOTAL PnL history (realized + unrealized)
@@ -319,8 +320,8 @@ class IntradayOptionEnvV3(gym.Env):
                     mask[self.ENTER_LONG] = True
 
             if config.POSITION_MODE in ('SHORT_ONLY', 'BOTH'):
-                short_margin = self._calculate_short_margin_per_lot(spot, atm, iv, tte, 'call') + \
-                               self._calculate_short_margin_per_lot(spot, atm, iv, tte, 'put')
+                short_margin = self._calculate_short_margin_per_lot(spot, atm + config.SHORT_STRIKE_OFFSET, iv, tte, 'call') + \
+                               self._calculate_short_margin_per_lot(spot, atm - config.SHORT_STRIKE_OFFSET, iv, tte, 'put')
                 if short_margin <= avail:
                     mask[self.ENTER_SHORT] = True
         else:
@@ -427,6 +428,7 @@ class IntradayOptionEnvV3(gym.Env):
         self.total_pnl = 0.0
         self.peak_pnl = 0.0
         self.max_drawdown = 0.0
+        self._prev_drawdown = 0.0
         self.premium_deployed = 0.0
         self.total_trades = 0
         self.total_turnover = 0.0
@@ -609,7 +611,9 @@ class IntradayOptionEnvV3(gym.Env):
                    config.PNL_W120 * pe_d120 / 120) / config.REWARD_NORMALIZER
         pnl_term = ce_term + pe_term
 
-        dd_term = config.DRAWDOWN_LAMBDA * (current_drawdown / config.REWARD_NORMALIZER)
+        delta_drawdown = max(0.0, current_drawdown - self._prev_drawdown)
+        dd_term = config.DRAWDOWN_LAMBDA * (delta_drawdown / config.REWARD_NORMALIZER)
+        self._prev_drawdown = current_drawdown
 
         terminal = 0.0
         if done:
@@ -644,11 +648,15 @@ class IntradayOptionEnvV3(gym.Env):
     # ─────────────────────────────────────────────────
 
     def _execute_enter(self, spot, iv, tte, current_time, side):
-        """Enter a new straddle position (LONG or SHORT)."""
+        """Enter a new straddle/strangle position (LONG or SHORT)."""
         # Calculate ATM strikes
         atm = round(spot / config.STRADDLE_STRIKE_GAP) * config.STRADDLE_STRIKE_GAP
-        self.ce_strike = atm
-        self.pe_strike = atm
+        if side == 'LONG':
+            self.ce_strike = atm
+            self.pe_strike = atm
+        elif side == 'SHORT':
+            self.ce_strike = atm + config.SHORT_STRIKE_OFFSET
+            self.pe_strike = atm - config.SHORT_STRIKE_OFFSET
 
         # BS prices
         ce_bs = black_scholes(spot, self.ce_strike, tte, config.RISK_FREE_RATE, iv, 'call')
@@ -833,7 +841,7 @@ class IntradayOptionEnvV3(gym.Env):
         idx = 0
 
         closes = np.array(self._hist_closes, dtype=np.float32)
-        highs = np.array(self._hist_highs, dtype=np.float32)
+        highs = np.array(self._hist_highs,  dtype=np.float32)
         lows = np.array(self._hist_lows, dtype=np.float32)
         opens = np.array(self._hist_opens, dtype=np.float32)
 

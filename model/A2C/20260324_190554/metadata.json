@@ -1,0 +1,58 @@
+{
+    "timestamp": "20260324_190554",
+    "agent": "A2C",
+    "training_data": {
+        "path": "data/train.csv",
+        "start_date": "2020-01-01",
+        "end_date": "2023-12-31"
+    },
+    "validation_data": {
+        "start_date": "2024-01-01",
+        "end_date": "2024-12-31"
+    },
+    "environment_parameters": {
+        "data_path": "data/train.csv",
+        "vix_data_path": "data/INDIA_VIX.csv",
+        "start_date": "2020-01-01",
+        "end_date": "2023-12-31"
+    },
+    "evaluation_environment_parameters": {
+        "data_path": "data/train.csv",
+        "vix_data_path": "data/INDIA_VIX.csv",
+        "start_date": "2024-01-01",
+        "end_date": "2024-12-31"
+    },
+    "model_parameters": {
+        "policy": "MlpPolicy",
+        "learning_rate": 0.001,
+        "n_steps": 5,
+        "gamma": 0.99,
+        "ent_coef": 0.001,
+        "total_timesteps": 10000000
+    },
+    "reward_settings": {
+        "PNL_LAMBDA": 2.0,
+        "STEP_PNL_LAMBDA": 0.5,
+        "DRAWDOWN_LAMBDA": 0.5,
+        "TRADE_PENALTY_LAMBDA": 0.01,
+        "TURNOVER_LAMBDA": 0.05,
+        "INVALID_ACTION_PENALTY": 0.5
+    },
+    "config_parameters": {
+        "INITIAL_CAPITAL": 1000000.0,
+        "MAX_LOTS": 10,
+        "TRANSACTION_COST_PCT": 0.05,
+        "SLIPPAGE_PCT": 0.02,
+        "START_TIME": "09:30",
+        "END_TIME": "15:15",
+        "STRADDLE_STRIKE_GAP": 100,
+        "LOT_SIZE": 75,
+        "STRATEGY_TYPE": "LONG",
+        "STRIKE_SELECTION_METHOD": "ATM",
+        "BOLLINGER_STD": 2.0,
+        "ATR_MULTIPLIER": 1.5,
+        "EXPIRY_DAY_OF_WEEK": 1,
+        "WINDOW_SIZE": 150,
+        "RISK_FREE_RATE": 0.06
+    }
+}

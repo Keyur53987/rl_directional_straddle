@@ -28,10 +28,13 @@ def load_data(results_dir):
         shap_path = os.path.join(results_dir, 'shap_importance.csv')
         shap_df = pd.read_csv(shap_path) if os.path.exists(shap_path) else None
         
-        return step_df, trade_df, episode_df, shap_df
+        shap_grad_path = os.path.join(results_dir, 'shap_importance_gradient.csv')
+        shap_df_grad = pd.read_csv(shap_grad_path) if os.path.exists(shap_grad_path) else None
+        
+        return step_df, trade_df, episode_df, shap_df, shap_df_grad
     except Exception as e:
         print(f"Error loading data from {results_dir}: {e}")
-        return None, None, None, None
+        return None, None, None, None, None
 
 
 def create_kpi_section(episode_df):
@@ -77,23 +80,33 @@ def create_kpi_section(episode_df):
     # Cumulative PnL Chart
     episode_df['cumulative_pnl'] = episode_df['pnl'].cumsum()
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=episode_df.index, y=episode_df['cumulative_pnl'], mode='lines', 
+    fig.add_trace(go.Scatter(x=episode_df['date'], y=episode_df['cumulative_pnl'], mode='lines', 
                              name='Cumulative PnL', line=dict(color='blue', width=3)))
     
-    fig.update_layout(title='Cumulative Return Curve', xaxis_title='Episode', yaxis_title='Total PnL (₹)',
+    fig.update_layout(title='Cumulative Return Curve', xaxis_title='Date', yaxis_title='Total PnL (₹)',
                       template='plotly_white', height=400)
     
     html += fig.to_html(full_html=False, include_plotlyjs='cdn')
     
     return html
 
-def create_time_breakdown_section(episode_df):
+def create_time_breakdown_section(episode_df, step_df=None):
     """Create HTML for Time-Period Breakdown sections."""
     episode_df['date'] = pd.to_datetime(episode_df['date'])
     
-    # Monthly Aggregation
+    # ── Monthly Aggregation ──
+    # Generate all 12 months for the year range so every month is plotted
     episode_df['month_yr'] = episode_df['date'].dt.to_period('M').astype(str)
     monthly = episode_df.groupby('month_yr')['pnl'].sum().reset_index()
+
+    # Build complete month index covering full date range
+    min_date = episode_df['date'].min()
+    max_date = episode_df['date'].max()
+    all_months = pd.period_range(start=min_date, end=max_date, freq='M').astype(str)
+    all_months_df = pd.DataFrame({'month_yr': all_months})
+    monthly = all_months_df.merge(monthly, on='month_yr', how='left').fillna(0)
+    # Explicit sort to guarantee chronological order
+    monthly = monthly.sort_values('month_yr').reset_index(drop=True)
     
     fig1 = go.Figure()
     fig1.add_trace(go.Bar(
@@ -101,13 +114,47 @@ def create_time_breakdown_section(episode_df):
         y=monthly['pnl'],
         marker_color=['green' if val >= 0 else 'red' for val in monthly['pnl']]
     ))
-    fig1.update_layout(title='Monthly PnL', template='plotly_white', height=400,
-                       xaxis_title='Month', yaxis_title='PnL (₹)')
+    fig1.update_layout(
+        title='Monthly PnL', template='plotly_white', height=400,
+        xaxis_title='Month', yaxis_title='PnL (₹)',
+        xaxis=dict(type='category', categoryorder='array', categoryarray=monthly['month_yr'].tolist())
+    )
     
-    # Day of week
-    dow_map = {0: '1-Mon', 1: '2-Tue', 2: '3-Wed', 3: '4-Thu', 4: '5-Fri', 5: '6-Sat', 6: '7-Sun'}
-    episode_df['dow_name'] = episode_df['day_of_week'].map(dow_map)
-    dow = episode_df.groupby('dow_name')['pnl'].sum().reset_index().sort_values('dow_name')
+    # ── Day of Week ──
+    # Only trading days Mon–Fri; filter out Saturday (5) and Sunday (6)
+    trading_dow_map = {0: 'Mon', 1: 'Tue', 2: 'Wed', 3: 'Thu', 4: 'Fri'}
+    trading_dow_order = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri']
+
+    if step_df is not None and 'day_of_week' in step_df.columns and 'total_pnl' in step_df.columns:
+        # Compute per-day PnL from step-level data:
+        # For each (episode, date), take the last step's total_pnl minus the first step's total_pnl
+        step_df_copy = step_df.copy()
+        step_df_copy['timestamp'] = pd.to_datetime(step_df_copy['timestamp'])
+        step_df_copy['step_date'] = step_df_copy['timestamp'].dt.date
+        step_df_copy['step_dow'] = step_df_copy['timestamp'].dt.weekday
+
+        # Filter out weekends (market off on Sat=5, Sun=6)
+        step_df_copy = step_df_copy[step_df_copy['step_dow'] < 5]
+
+        daily_pnl = step_df_copy.groupby(['episode', 'step_date', 'step_dow']).agg(
+            pnl_start=('total_pnl', 'first'),
+            pnl_end=('total_pnl', 'last')
+        ).reset_index()
+        daily_pnl['daily_pnl'] = daily_pnl['pnl_end'] - daily_pnl['pnl_start']
+        daily_pnl['dow_name'] = daily_pnl['step_dow'].map(trading_dow_map)
+
+        dow = daily_pnl.groupby('dow_name')['daily_pnl'].sum().reset_index()
+        dow.columns = ['dow_name', 'pnl']
+    else:
+        # Fallback: use episode-level (single-day episodes)
+        episode_df['dow_name'] = episode_df['day_of_week'].map(trading_dow_map)
+        # Filter out any weekend episodes
+        episode_df_filtered = episode_df[episode_df['day_of_week'] < 5]
+        dow = episode_df_filtered.groupby('dow_name')['pnl'].sum().reset_index()
+
+    # Ensure all 5 trading days are present (fill missing days like Tuesday with 0)
+    all_days_df = pd.DataFrame({'dow_name': trading_dow_order})
+    dow = all_days_df.merge(dow, on='dow_name', how='left').fillna(0)
     
     fig2 = go.Figure()
     fig2.add_trace(go.Bar(
@@ -115,8 +162,11 @@ def create_time_breakdown_section(episode_df):
         y=dow['pnl'],
         marker_color=['green' if val >= 0 else 'red' for val in dow['pnl']]
     ))
-    fig2.update_layout(title='PnL by Day of Week', template='plotly_white', height=400,
-                       xaxis_title='Day of Week', yaxis_title='PnL (₹)')
+    fig2.update_layout(
+        title='PnL by Day of Week', template='plotly_white', height=400,
+        xaxis_title='Day of Week', yaxis_title='PnL (₹)',
+        xaxis=dict(type='category', categoryorder='array', categoryarray=trading_dow_order)
+    )
     
     html = "<div style='display: flex; gap: 20px;'>"
     html += f"<div style='flex: 1;'>{fig1.to_html(full_html=False, include_plotlyjs=False)}</div>"
@@ -241,30 +291,49 @@ def create_intraday_behavior_section(trade_df):
     
     return html
 
-def create_shap_section(shap_df):
+def create_shap_section(shap_df, shap_df_grad=None):
     """Create SHAP importance bar chart."""
-    if shap_df is None or len(shap_df) == 0:
+    if (shap_df is None or len(shap_df) == 0) and (shap_df_grad is None or len(shap_df_grad) == 0):
         return "<p>No SHAP data available. Run the test script with compute_shap=True.</p>"
         
-    top_n = min(20, len(shap_df))
-    df_plot = shap_df.head(top_n).sort_values('importance', ascending=True)
+    html = "<div style='display: flex; gap: 20px;'>"
     
-    fig = go.Figure()
-    fig.add_trace(go.Bar(
-        x=df_plot['importance'], 
-        y=df_plot['feature'],
-        orientation='h',
-        marker=dict(color=df_plot['importance'], colorscale='Viridis')
-    ))
-    fig.update_layout(title=f'Top {top_n} Features Influencing Model Decisions', template='plotly_white', height=600)
-    
-    return fig.to_html(full_html=False, include_plotlyjs=False)
+    if shap_df is not None and len(shap_df) > 0:
+        top_n = min(20, len(shap_df))
+        df_plot = shap_df.head(top_n).sort_values('importance', ascending=True)
+        
+        fig1 = go.Figure()
+        fig1.add_trace(go.Bar(
+            x=df_plot['importance'], 
+            y=df_plot['feature'],
+            orientation='h',
+            marker=dict(color=df_plot['importance'], colorscale='Viridis')
+        ))
+        fig1.update_layout(title=f'Perturbation-based SHAP ({top_n} Features)', template='plotly_white', height=600)
+        html += f"<div style='flex: 1;'>{fig1.to_html(full_html=False, include_plotlyjs=False)}</div>"
+        
+    if shap_df_grad is not None and len(shap_df_grad) > 0:
+        top_n = min(20, len(shap_df_grad))
+        df_plot = shap_df_grad.head(top_n).sort_values('importance', ascending=True)
+        
+        fig2 = go.Figure()
+        fig2.add_trace(go.Bar(
+            x=df_plot['importance'], 
+            y=df_plot['feature'],
+            orientation='h',
+            marker=dict(color=df_plot['importance'], colorscale='Plasma')
+        ))
+        fig2.update_layout(title=f'Gradient-based Attribution ({top_n} Features)', template='plotly_white', height=600)
+        html += f"<div style='flex: 1;'>{fig2.to_html(full_html=False, include_plotlyjs=False)}</div>"
+
+    html += "</div>"
+    return html
 
 def generate_report(dataset_label, results_dir):
     """Generate the full HTML report for a dataset."""
     print(f"Generating dashboard for {dataset_label} in {results_dir}...")
     
-    step_df, trade_df, episode_df, shap_df = load_data(results_dir)
+    step_df, trade_df, episode_df, shap_df, shap_df_grad = load_data(results_dir)
     
     if episode_df is None:
         print(f"Skipping {dataset_label} - data not found.")
@@ -272,11 +341,11 @@ def generate_report(dataset_label, results_dir):
         
     # Build HTML sections
     kpi_html = create_kpi_section(episode_df)
-    time_html = create_time_breakdown_section(episode_df)
+    time_html = create_time_breakdown_section(episode_df, step_df=step_df)
     action_html = create_action_preference_section(step_df) if step_df is not None else ""
     regime_html = create_market_regime_section(episode_df)
     intraday_html = create_intraday_behavior_section(trade_df)
-    shap_html = create_shap_section(shap_df)
+    shap_html = create_shap_section(shap_df, shap_df_grad)
 
     # Compile Full HTML
     html_template = f"""
@@ -348,7 +417,7 @@ def generate_report(dataset_label, results_dir):
     print(f"Dashboard saved to: {output_path}")
 
 def main():
-    MODEL_ID = "20260408_132055"
+    MODEL_ID = "20260424_142141"
     BASE_DIR = os.path.join('model', 'MaskablePPO', MODEL_ID)
     
     datasets = ['train', 'test']

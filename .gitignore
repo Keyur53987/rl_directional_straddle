@@ -1,7 +1,8 @@
 __pycache__
+.venv
 /Docs
 /envs/__pycache__
 /utils/__pycache__
 /.pytest_cache
 /live_execution
-/model
+/data/maskableppo_trades_20260505.csv

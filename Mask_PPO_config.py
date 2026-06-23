@@ -14,6 +14,7 @@ SLIPPAGE_PCT = 0.02 / 100           # 0.02% slippage (as decimal)
 START_TIME = "09:15"
 END_TIME = "15:30"
 STRADDLE_STRIKE_GAP = 100           # NIFTY strike gap
+SHORT_STRIKE_OFFSET = 100           # OTM offset for SHORT strangle (CE=ATM+offset, PE=ATM-offset)
 LOT_SIZE = 75                       # NIFTY lot size
 EXPIRY_DAY_OF_WEEK = 1              # 0=Mon, 1=Tue (NIFTY50 weekly expiry)
 MAX_EPISODE_DAYS = 5                # Safety cap: max calendar days per episode

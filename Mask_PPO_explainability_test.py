@@ -28,7 +28,7 @@ warnings.filterwarnings('ignore')
 
 from sb3_contrib import MaskablePPO
 from sb3_contrib.common.wrappers import ActionMasker
-from envs.intraday_option_env_maskPPO import IntradayOptionEnvV2
+from envs.intraday_option_env_maskPPO_v3 import IntradayOptionEnvV3
 import Mask_PPO_config as config
 
 # ── Constants ──
@@ -48,6 +48,7 @@ FEATURE_NAMES = [
     'current_drawdown', 'max_drawdown_norm', 'rolling_sharpe',
     'time_to_expiry_norm', 'is_overnight',
     'position_side_enc', 'position_duration',
+    'ce_unrealized_pnl', 'pe_unrealized_pnl',  # v3 features
 ]
 
 MARKET_EVENTS = {
@@ -91,7 +92,7 @@ def init_worker(model_path, data_path, vix_data_path, start_date, end_date):
     global w_model, w_env, w_raw_env
     # Load on CPU for multiprocessing
     w_model = MaskablePPO.load(model_path, device='cpu')
-    w_raw_env = IntradayOptionEnvV2(
+    w_raw_env = IntradayOptionEnvV3(
         data_path=data_path,
         vix_data_path=vix_data_path,
         start_date=start_date,
@@ -248,7 +249,10 @@ def worker_process_episode(args):
 
 def compute_shap_importance(model, env, raw_env, num_samples=200):
     print("  Computing SHAP feature importance (perturbation-based)...")
-    importances = np.zeros(67)
+    obs_dim = model.observation_space.shape[0]
+    # Use feature names up to obs_dim (handles both 67 and 69)
+    feature_names = FEATURE_NAMES[:obs_dim]
+    importances = np.zeros(obs_dim)
     obs_samples = []
 
     total_dates = len(raw_env.dates)
@@ -266,14 +270,14 @@ def compute_shap_importance(model, env, raw_env, num_samples=200):
             step_count += 1
 
     obs_array = np.array(obs_samples[:num_samples])
-    print(f"    Collected {len(obs_array)} observation samples")
+    print(f"    Collected {len(obs_array)} observation samples (obs_dim={obs_dim})")
 
     if len(obs_array) == 0:
-        return pd.DataFrame({'feature': FEATURE_NAMES, 'importance': np.zeros(67)})
+        return pd.DataFrame({'feature': feature_names, 'importance': np.zeros(obs_dim)})
 
     policy = model.policy
 
-    for feat_idx in range(67):
+    for feat_idx in range(obs_dim):
         changes = []
         for obs in obs_array[:min(100, len(obs_array))]:
             obs_tensor = torch.FloatTensor(obs).unsqueeze(0).to(model.device)
@@ -297,7 +301,66 @@ def compute_shap_importance(model, env, raw_env, num_samples=200):
     if total > 0: importances = importances / total
 
     df_shap = pd.DataFrame({
-        'feature': FEATURE_NAMES, 'importance': importances,
+        'feature': feature_names, 'importance': importances,
+        'rank': np.argsort(-importances) + 1
+    }).sort_values('importance', ascending=False)
+    return df_shap
+
+def compute_shap_importance_gradient(model, env, raw_env, num_samples=200):
+    print("  Computing SHAP feature importance (gradient-based)...")
+    obs_dim = model.observation_space.shape[0]
+    feature_names = FEATURE_NAMES[:obs_dim]
+    importances = np.zeros(obs_dim)
+    obs_samples = []
+
+    total_dates = len(raw_env.dates)
+    sample_indices = np.random.choice(total_dates, min(num_samples // 50, total_dates), replace=False)
+
+    for date_idx in sample_indices:
+        obs, _ = env.reset(options={'date_index': int(date_idx)})
+        done = False
+        step_count = 0
+        while not done and step_count < 50:
+            obs_samples.append(obs.copy())
+            action_masks = raw_env.action_masks()
+            action, _ = model.predict(obs, deterministic=True, action_masks=action_masks)
+            obs, _, done, _, _ = env.step(action)
+            step_count += 1
+
+    obs_array = np.array(obs_samples[:num_samples])
+    print(f"    Collected {len(obs_array)} observation samples (obs_dim={obs_dim})")
+
+    if len(obs_array) == 0:
+        return pd.DataFrame({'feature': feature_names, 'importance': np.zeros(obs_dim)})
+
+    policy = model.policy
+
+    grads_list = []
+    for obs in obs_array[:min(100, len(obs_array))]:
+        obs_tensor = torch.FloatTensor(obs).unsqueeze(0).to(model.device)
+        obs_tensor.requires_grad_(True)
+        
+        dist = policy.get_distribution(obs_tensor)
+        probs = dist.distribution.probs
+        max_prob = probs.max()
+        
+        if obs_tensor.grad is not None:
+            obs_tensor.grad.zero_()
+            
+        max_prob.backward()
+        
+        grad = obs_tensor.grad.cpu().numpy().flatten()
+        # Scale gradient by feature value (Gradient * Input) as a proxy for attribution
+        attribution = np.abs(grad * obs)
+        grads_list.append(attribution)
+        
+    importances = np.mean(grads_list, axis=0)
+
+    total = importances.sum()
+    if total > 0: importances = importances / total
+
+    df_shap = pd.DataFrame({
+        'feature': feature_names, 'importance': importances,
         'rank': np.argsort(-importances) + 1
     }).sort_values('importance', ascending=False)
     return df_shap
@@ -306,7 +369,7 @@ def compute_shap_importance(model, env, raw_env, num_samples=200):
 def main():
     AGENT = 'MaskablePPO'
     VIX_DATA_PATH = 'data/INDIA_VIX.csv'
-    MODEL_ID = "20260417_142918"
+    MODEL_ID = "20260424_142141" 
     
     SEED = 42
     random.seed(SEED)
@@ -335,7 +398,7 @@ def main():
         os.makedirs(results_dir, exist_ok=True)
         
         # We need a quick read to know total dates
-        dummy_env = IntradayOptionEnvV2(data_path=ds['data_path'], start_date=ds['start_date'], end_date=ds['end_date'])
+        dummy_env = IntradayOptionEnvV3(data_path=ds['data_path'], start_date=ds['start_date'], end_date=ds['end_date'])
         total_dates = len(dummy_env.dates)
         print(f"  Total epochs to process: {total_dates}")
         
@@ -382,9 +445,13 @@ def main():
             print("\n  Loading local env in main process for SHAP...")
             model = MaskablePPO.load(LOAD_PATH, device='cpu')
             env = ActionMasker(dummy_env, mask_fn)
-            df_shap = compute_shap_importance(model, env, dummy_env, num_samples=200)
+            df_shap = compute_shap_importance(model, env, dummy_env, num_samples=100000)
             df_shap.to_csv(os.path.join(results_dir, 'shap_importance.csv'), index=False)
             print(f"  OK SHAP importance saved")
+            
+            df_shap_grad = compute_shap_importance_gradient(model, env, dummy_env, num_samples=100000)
+            df_shap_grad.to_csv(os.path.join(results_dir, 'shap_importance_gradient.csv'), index=False)
+            print(f"  OK SHAP importance (gradient) saved")
 
     print(f"\n{'='*60}\n  ALL EXPLAINABILITY TESTS COMPLETE\n{'='*60}")
 

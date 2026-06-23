@@ -17,10 +17,11 @@ SLIPPAGE_PCT = 0.5 / 100           # 0.02% slippage (as decimal)
 # ── Market ──
 START_TIME = "09:15"
 END_TIME = "15:30"
-STRADDLE_STRIKE_GAP = 100           # NIFTY strike gap
+STRADDLE_STRIKE_GAP = 50           # NIFTY strike gap
+SHORT_STRIKE_OFFSET = 100           # OTM offset for SHORT strangle (CE=ATM+offset, PE=ATM-offset)
 LOT_SIZE = 65                       # NIFTY lot size
 EXPIRY_DAY_OF_WEEK = 1              # 0=Mon, 1=Tue (NIFTY50 weekly expiry)
-MAX_EPISODE_DAYS = 5                # Safety cap: max calendar days per episode
+MAX_EPISODE_DAYS= 7                # Safety cap: max calendar days per episode
 
 # ── Strategy ──
 POSITION_MODE = 'BOTH'         # 'LONG_ONLY', 'SHORT_ONLY', 'BOTH'
@@ -48,7 +49,7 @@ PNL_W1   = 0.15                     # 1-step:   news shock detection (low weight
 PNL_W30  = 0.60                     # 30-step:  primary signal (30-min half-session trend)
 PNL_W120 = 0.25                     # 120-step: half-day regime confirmation
 
-DRAWDOWN_LAMBDA = 0.01              # Light penalty for current drawdown
+DRAWDOWN_LAMBDA = 1.0               # Delta-drawdown: penalize only when DD deepens
 WIN_BONUS = 2.0                     # Terminal: bonus if episode PnL > 0
 NO_TRADE_PENALTY = 1.0              # Terminal: penalty if 0 trades all episode
 
@@ -60,7 +61,7 @@ RISK_FREE_RATE = 0.06               # Annual risk-free rate
 LEARNING_RATE = 7e-4
 N_STEPS = 1024
 BATCH_SIZE = 256
-GAMMA = 0.99
+GAMMA = 0.9995
 ENT_COEF = 0.05
 TOTAL_TIMESTEPS = 1_500_000
 NUM_ENVS = 4
